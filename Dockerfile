@@ -1,6 +1,9 @@
-FROM osrf/ros:humble-desktop
+FROM osrf/ros:humble-desktop-jammy
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+# Humble's default ros-gz binaries target Gazebo Fortress. Vyoma uses Gazebo
+# Harmonic, so install OSRF's matching transport bridge instead.
 
 # Install essential tools and PX4 dependencies
 RUN apt-get update && apt-get install -y \
@@ -24,13 +27,17 @@ RUN apt-get update && apt-get install -y \
     gz-harmonic \
     libunwind-dev \
     ros-humble-navigation2 \
+    ros-humble-nav2-bringup \
     ros-humble-nav2-costmap-2d \
+    ros-humble-ros-gzharmonic \
     ros-humble-vision-msgs \
     ros-humble-cv-bridge \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python AI libraries (Pin numpy < 2 and opencv < 4.9 for cv_bridge compatibility)
-RUN pip3 install --no-cache-dir ultralytics "opencv-python==4.8.1.78" "numpy<2" gymnasium stable-baselines3[extra] tensorboard "setuptools==58.2.0"
+# Install a mutually compatible, reproducible Python toolchain.
+COPY requirements.txt /tmp/vyoma-requirements.txt
+RUN pip3 install --no-cache-dir --timeout 1000 --retries 10 \
+    -r /tmp/vyoma-requirements.txt
 
 # Add a non-root user matching the host user to avoid permission issues with mounted volumes
 ARG USERNAME=drone_user

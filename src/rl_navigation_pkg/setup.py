@@ -23,7 +23,7 @@ setup(
     entry_points={
         'console_scripts': [
             'train_node = rl_navigation_pkg.train_node:main',
-            'rl_inference_node = rl_navigation_pkg.rl_inference_node:main'
+            'policy_node = rl_navigation_pkg.policy_node:main'
         ],
     },
 )

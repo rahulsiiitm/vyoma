@@ -3,6 +3,11 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from rl_navigation_pkg.drone_env import DroneEnv
 import os
+import json
+import platform
+import subprocess
+
+from rl_navigation_pkg.observation import OBSERVATION_SIZE, SCHEMA_VERSION
 
 def main(args=None):
     rclpy.init(args=args)
@@ -12,7 +17,8 @@ def main(args=None):
     # Optional: Check if environment follows gym API
     # check_env(env)
     
-    model_path = os.path.join(os.getcwd(), "ppo_drone_nav")
+    model_path = os.path.join(os.getcwd(), "artifacts", "ppo_drone_nav")
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
     
     print("Starting PPO Training for Drone Navigation...")
     # Initialize PPO agent
@@ -26,7 +32,8 @@ def main(args=None):
         n_epochs=10,
         gamma=0.99,
         gae_lambda=0.95,
-        tensorboard_log="./ppo_drone_tensorboard/"
+        tensorboard_log="./artifacts/tensorboard/",
+        seed=42,
     )
     
     try:
@@ -34,6 +41,19 @@ def main(args=None):
         model.learn(total_timesteps=100000, progress_bar=True)
         # Save the model
         model.save(model_path)
+        metadata = {
+            "schema_version": SCHEMA_VERSION,
+            "observation_size": OBSERVATION_SIZE,
+            "action_size": 3,
+            "algorithm": "PPO",
+            "seed": 42,
+            "python": platform.python_version(),
+            "git_commit": subprocess.run(
+                ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+            ).stdout.strip() or "unknown",
+        }
+        with open(model_path + ".metadata.json", "w", encoding="utf-8") as metadata_file:
+            json.dump(metadata, metadata_file, indent=2)
         print(f"Model saved to {model_path}.zip")
     except KeyboardInterrupt:
         print("Training interrupted! Saving current progress...")

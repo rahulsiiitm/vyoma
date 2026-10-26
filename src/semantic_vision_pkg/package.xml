@@ -5,7 +5,7 @@
   <version>0.0.0</version>
   <description>YOLO Vision Node</description>
   <maintainer email="rahul@todo.todo">Rahul</maintainer>
-  <license>TODO</license>
+  <license>Proprietary</license>
 
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>

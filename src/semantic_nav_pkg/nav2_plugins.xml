@@ -1,5 +1,0 @@
-<library path="semantic_layer_lib">
-  <class name="semantic_nav_pkg/SemanticLayer" type="semantic_nav_pkg::SemanticLayer" base_class_type="nav2_costmap_2d::Layer">
-    <description>This is a custom plugin that creates costs based on Semantic Segmentation.</description>
-  </class>
-</library>

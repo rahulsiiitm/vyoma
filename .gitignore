@@ -20,6 +20,9 @@ COLCON_IGNORE
 # Ignore Heavy Models (Optional - if >100MB)
 *.onnx
 *.engine
+artifacts/
+ppo_drone_tensorboard/
+*.zip
 
 # Ignore Simulation dependencies
 simulation/PX4-Autopilot/

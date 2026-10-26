@@ -10,6 +10,7 @@ docker build -t drone_ros2_env -f Dockerfile .
 # Run the docker container
 echo "Starting Docker container..."
 docker run -it --rm \
+    --name=vyoma-dev \
     --net=host \
     --ipc=host \
     --device=/dev/video0:/dev/video0 \
