@@ -6,7 +6,7 @@ from typing import Optional
 import gymnasium as gym
 from gymnasium import spaces
 from geometry_msgs.msg import PoseStamped, TwistStamped
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -24,13 +24,19 @@ class DroneEnv(gym.Env, Node):
 
     metadata = {'render_modes': []}
 
-    def __init__(self, maximum_steps: int = 1200, reset_timeout: float = 10.0):
+    def __init__(self, maximum_steps: int = 1200, reset_timeout: float = 10.0,
+                 step_timeout: float = 1.0):
         gym.Env.__init__(self)
         Node.__init__(self, 'drone_rl_environment')
         self.action_space = spaces.Box(-1.0, 1.0, shape=(3,), dtype=np.float32)
         self.observation_space = spaces.Box(-1.0, 1.0, shape=(OBSERVATION_SIZE,), dtype=np.float32)
         self.maximum_steps = maximum_steps
         self.reset_timeout = reset_timeout
+        # Each step lasts exactly one policy_node control tick: the step returns
+        # on the next observation, so step length follows the node's sim-time timer.
+        self.step_timeout = step_timeout
+        self.observation_sequence = 0
+        self.path: Optional[Path] = None
         self.observation = np.zeros(OBSERVATION_SIZE, dtype=np.float32)
         self.odom: Optional[Odometry] = None
         self.goal = np.zeros(2, dtype=np.float32)
@@ -54,16 +60,37 @@ class DroneEnv(gym.Env, Node):
             Float32MultiArray, '/vyoma/rl/observation', self.observation_callback, 10
         )
         self.create_subscription(Odometry, '/vyoma/odometry', self.odom_callback, 10)
+        self.create_subscription(Path, '/vyoma/global_path', self.path_callback, 10)
         self.create_subscription(String, '/vyoma/safety/status', self.safety_callback, 10)
 
     def observation_callback(self, msg):
         values = np.asarray(msg.data, dtype=np.float32)
         if values.shape == (OBSERVATION_SIZE,):
             self.observation = values
+            self.observation_sequence += 1
 
     def odom_callback(self, msg):
         self.odom = msg
         self.odom_sequence += 1
+
+    def path_callback(self, msg):
+        self.path = msg
+
+    def cross_track_error(self):
+        if self.odom is None or self.path is None or not self.path.poses:
+            return 0.0
+        x = self.odom.pose.pose.position.x
+        y = self.odom.pose.pose.position.y
+        return min(math.hypot(item.pose.position.x - x, item.pose.position.y - y)
+                   for item in self.path.poses)
+
+    def wait_for_observation(self, after_sequence):
+        deadline = time.monotonic() + self.step_timeout
+        while self.observation_sequence <= after_sequence:
+            if time.monotonic() >= deadline:
+                return False
+            rclpy.spin_once(self, timeout_sec=0.01)
+        return True
 
     def safety_callback(self, msg):
         try:
@@ -105,13 +132,15 @@ class DroneEnv(gym.Env, Node):
 
     def step(self, action):
         action = np.asarray(action, dtype=np.float32)
+        sequence = self.observation_sequence
         self.publish_action(action)
-        rclpy.spin_once(self, timeout_sec=0.1)
+        if not self.wait_for_observation(sequence):
+            raise RuntimeError('no fresh observation within the step timeout')
         distance = self.distance_to_goal()
         progress = 0.0 if self.previous_distance is None else self.previous_distance - distance
         reached = distance < 0.5
         collision = self.clearance < 0.3
-        reward = calculate_reward(progress, 0.0, self.clearance, action,
+        reward = calculate_reward(progress, self.cross_track_error(), self.clearance, action,
                                   self.previous_action, self.safety_override, reached, collision)
         self.previous_distance = distance
         self.previous_action = action.copy()
@@ -178,6 +207,9 @@ class DroneEnv(gym.Env, Node):
         for _ in range(3):
             self.goal_pub.publish(goal)
             rclpy.spin_once(self, timeout_sec=0.1)
+        self.path = None
+        if not self.wait_for_observation(self.observation_sequence):
+            raise RuntimeError('no observation published after reset')
         self.previous_distance = None
         self.previous_action.fill(0.0)
         self.step_count = 0

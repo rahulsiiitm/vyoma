@@ -4,7 +4,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -16,6 +16,7 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration('use_rviz')
     model_path = LaunchConfiguration('model_path')
     run_policy = LaunchConfiguration('run_policy')
+    training = LaunchConfiguration('training')
 
     common = [parameters, {'use_sim_time': use_sim_time}]
     return LaunchDescription([
@@ -23,6 +24,8 @@ def generate_launch_description():
         DeclareLaunchArgument('use_rviz', default_value='true'),
         DeclareLaunchArgument('model_path', default_value=''),
         DeclareLaunchArgument('run_policy', default_value='true'),
+        DeclareLaunchArgument('training', default_value='false',
+                              description='Observation-only policy node; actions come from DroneEnv'),
         Node(package='tf2_ros', executable='static_transform_publisher',
              arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom']),
         Node(package='tf2_ros', executable='static_transform_publisher',
@@ -40,7 +43,8 @@ def generate_launch_description():
         Node(package='semantic_nav_pkg', executable='safety_supervisor_node', parameters=common),
         Node(package='semantic_nav_pkg', executable='px4_adapter_node', parameters=common),
         Node(package='rl_navigation_pkg', executable='policy_node', output='screen',
-             parameters=[parameters, {'use_sim_time': use_sim_time, 'model_path': model_path}],
+             parameters=[parameters, {'use_sim_time': use_sim_time, 'model_path': model_path,
+                                     'publish_action': PythonExpression(["'", training, "' != 'true'"])}],
              condition=IfCondition(run_policy)),
         Node(package='rviz2', executable='rviz2', name='rviz_visualizer',
              arguments=['-d', os.path.join(share, 'config', 'default.rviz')],

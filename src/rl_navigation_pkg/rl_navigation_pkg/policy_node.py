@@ -23,6 +23,9 @@ class PolicyNode(Node):
         self.declare_parameter('model_path', '')
         self.declare_parameter('allow_fallback', True)
         self.declare_parameter('maximum_range', 10.0)
+        # Disabled during training: the Gym environment owns /vyoma/rl/raw_action
+        # and this node only publishes observations.
+        self.declare_parameter('publish_action', True)
         self.model = None
         model_path = str(self.get_parameter('model_path').value)
         if model_path:
@@ -45,6 +48,7 @@ class PolicyNode(Node):
         else:
             self.get_logger().warn('No PPO model configured; using commissioning baseline')
         self.maximum_range = float(self.get_parameter('maximum_range').value)
+        self.publish_action = bool(self.get_parameter('publish_action').value)
         self.history = ObservationHistory()
         self.scan = self.odom = self.target = self.goal = self.path = None
         self.previous_action = np.zeros(3, dtype=np.float32)
@@ -55,6 +59,9 @@ class PolicyNode(Node):
         self.create_subscription(PoseStamped, '/vyoma/local_target', self.target_callback, 10)
         self.create_subscription(PoseStamped, '/vyoma/mission/command', self.goal_callback, 10)
         self.create_subscription(Path, '/vyoma/global_path', self.path_callback, 10)
+        if not self.publish_action:
+            self.create_subscription(TwistStamped, '/vyoma/rl/raw_action',
+                                     self.external_action_callback, 10)
         self.create_service(Trigger, '/vyoma/policy/reset', self.reset_callback)
         self.create_timer(0.1, self.control_loop)
 
@@ -72,6 +79,10 @@ class PolicyNode(Node):
     def target_callback(self, msg): self.target = msg
     def goal_callback(self, msg): self.goal = msg
     def path_callback(self, msg): self.path = msg
+
+    def external_action_callback(self, msg):
+        self.previous_action = np.asarray([msg.twist.linear.x / 2.0, msg.twist.linear.y / 1.5,
+                                           msg.twist.angular.z], dtype=np.float32)
 
     @staticmethod
     def relative_goal(pose, goal):
@@ -113,6 +124,8 @@ class PolicyNode(Node):
         observation_msg.layout.dim = [dimension]
         observation_msg.data = observation.tolist()
         self.observation_pub.publish(observation_msg)
+        if not self.publish_action:
+            return
         if self.model is not None:
             normalized, _ = self.model.predict(observation, deterministic=True)
             normalized = np.clip(np.asarray(normalized, dtype=np.float32), -1.0, 1.0)
