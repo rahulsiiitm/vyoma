@@ -1,0 +1,22 @@
+numpy==1.26.4
+opencv-python==4.8.1.78
+packaging==24.1
+setuptools==70.3.0
+ultralytics==8.3.0
+gymnasium==0.29.1
+stable-baselines3==2.4.1
+tensorboard==2.17.1
+pytest==8.3.2
+# Headless SITL ground-station heartbeat and simulation acceptance tooling.
+pymavlink==2.4.49
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.4.1+cpu
+torchvision==0.19.1+cpu
+kconfiglib==14.1.0
+jinja2==3.1.6
+jsonschema==4.23.0
+future==1.0.0
+toml==0.10.2
+PyYAML==6.0.2
+empy==3.3.4
+pyros-genmsg==0.5.8

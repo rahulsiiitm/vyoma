@@ -10,6 +10,8 @@ __pycache__/
 *.pyc
 *.pyo
 venv/
+.venv/
+.pytest_cache/
 
 # Ignore ROS 2 Build Artifacts (CRITICAL)
 build/
@@ -20,6 +22,9 @@ COLCON_IGNORE
 # Ignore Heavy Models (Optional - if >100MB)
 *.onnx
 *.engine
+artifacts/
+ppo_drone_tensorboard/
+*.zip
 
 # Ignore Simulation dependencies
 simulation/PX4-Autopilot/

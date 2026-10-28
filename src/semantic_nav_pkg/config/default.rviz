@@ -52,26 +52,38 @@ Visualization Manager:
         Value: /global_costmap/costmap_updates
       Use Timestamp: false
       Value: true
-    - Alpha: 1
-      Class: rviz_default_plugins/Map
-      Color Scheme: costmap
-      Draw Behind: false
+    - Class: rviz_default_plugins/Path
       Enabled: true
-      Name: Local Costmap
+      Name: Global Route
+      Color: 80; 200; 255
+      Line Style: Lines
+      Line Width: 0.05
       Topic:
-        Depth: 5
-        Durability Policy: Transient Local
+        Depth: 1
+        Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /local_costmap/costmap
-      Update Topic:
-        Depth: 5
-        Durability Policy: Transient Local
+        Value: /vyoma/global_path
+    - Class: rviz_default_plugins/Odometry
+      Enabled: true
+      Name: Vehicle Pose
+      Keep: 10
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /local_costmap/costmap_updates
-      Use Timestamp: false
-      Value: true
+        Value: /vyoma/odometry
+    - Class: rviz_default_plugins/Pose
+      Enabled: true
+      Name: Local Target
+      Color: 255; 180; 70
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /vyoma/local_target
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -144,7 +156,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /goal_pose
+        Value: /vyoma/mission/command
   Value: true
   Views:
     Current:

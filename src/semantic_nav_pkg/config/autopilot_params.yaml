@@ -1,0 +1,38 @@
+mission_manager:
+  ros__parameters:
+    simulation_authorized: true
+    takeoff_altitude: 5.0
+    goal_tolerance: 0.5
+    recovery_error: 0.75
+
+px4_adapter:
+  ros__parameters:
+    takeoff_altitude: 5.0
+    vehicle_status_timeout: 1.5
+    vehicle_status_topic: /fmu/out/vehicle_status_v4
+
+depth_sector_node:
+  ros__parameters:
+    sector_count: 64
+    maximum_range: 10.0
+    minimum_height: -1.0
+    maximum_height: 1.0
+
+safety_supervisor:
+  ros__parameters:
+    max_forward: 2.0
+    max_lateral: 1.5
+    max_yaw_rate: 1.0
+    max_acceleration: 2.0
+    hard_clearance: 0.75
+    warning_clearance: 1.5
+    input_timeout: 0.5
+
+local_target_node:
+  ros__parameters:
+    lookahead_distance: 2.0
+
+rl_policy_node:
+  ros__parameters:
+    allow_fallback: true
+    maximum_range: 10.0

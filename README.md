@@ -3,141 +3,313 @@
 ![Vyoma Workbench](assets/banner.jpg)
 [![ROS 2](https://img.shields.io/badge/ROS_2-Humble-blue.svg)](https://docs.ros.org/en/humble/)
 [![Simulation](https://img.shields.io/badge/Simulation-PX4%20SITL-orange.svg)](https://px4.io/)
-[![Hardware](https://img.shields.io/badge/Hardware-Jetson_Nano-green.svg)](https://developer.nvidia.com/embedded/jetson-nano-developer-kit)
+[![Hardware](https://img.shields.io/badge/Hardware-Jetson_Orin_Nano_Super-green.svg)](https://developer.nvidia.com/embedded/learn/get-started-jetson-orin-nano-devkit)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Active_Development-yellow.svg)]()
 
-A ground-up autopilot stack for semantically-aware, edge-deployed autonomous flight. Rather than treating navigation as pure geometric obstacle avoidance, this system fuses camera and LiDAR modalities through deep learning so the drone reasons about *what* it sees, not just *where* things are — distinguishing a person from a tree, a wire from open air, a rooftop from a hazard.
+Vyoma is a simulation-first autonomous drone research platform built on **ROS 2 Humble**, **PX4 SITL**, **Gazebo**, **Nav2**, and **Stable-Baselines3 PPO**.
 
-Designed for real-world deployment on an **NVIDIA Jetson Nano**, the stack is built on **ROS 2 Humble**, **Nav2**, and **PX4**, targeting complex missions in dynamic, unmapped, and unstructured environments where classical waypoint-following autopilots fail.
+Given an authorized destination, the Stage 1 system is designed to take off, request a global route, use a reinforcement-learning local controller to deflect around obstacles, recover its route, reach the goal, and land without manual steering. PX4 remains responsible for stabilization and motor control, while every learned command passes through an independent deterministic safety supervisor.
 
 ---
 
-## Why Semantic Autonomy
+## Why RL Autonomy
 
-Traditional autopilots treat every obstacle identically: a wall, a pedestrian, and a mailbox all just occupy a costmap cell. This is unsafe and inefficient — a drone should keep a far wider berth from a person than from a bush, and should actively seek out flat, human-free terrain when landing autonomously. This project closes that gap by injecting class-aware semantic understanding directly into the navigation stack, not as an afterthought bolted onto perception, but as a first-class signal in path planning and landing-site selection.
+Classical navigation is valuable for global route generation, but manually designed local rules become brittle in cluttered and dynamic environments. Vyoma uses a hybrid architecture: Nav2 provides global guidance, PPO learns local movement and obstacle-deflection behavior, and a deterministic safety layer enforces non-negotiable flight limits.
+
+The policy can slow down, stop, move laterally, turn around an obstacle, pass through a safe opening, and return to the global route. It cannot arm the aircraft, change PX4 modes, command motors directly, or bypass safety constraints.
+
+Semantic perception remains part of the project direction. Geometry-based autonomy is being established first so that semantic class channels can later be introduced and evaluated against a reliable baseline.
 
 ---
 
 ## System Architecture
 
-The stack is organized into three tightly-coupled layers, each independently testable in simulation before hardware deployment.
-
 ### 1. Perception & Sensing Layer
-- **Semantic Vision (Camera + YOLOv8):** Real-time semantic segmentation and object detection via an optimized YOLOv8 model (`yolov8n-seg.pt`), quantized for Jetson-class inference. Classifies people, vehicles, foliage, structures, and viable landing zones frame-by-frame.
-- **LiDAR Sensing:** High-resolution 2D/3D point cloud processing for immediate, precise obstacle detection — including thin, vision-invisible hazards like power lines and guy wires — and construction of local occupancy grids.
-- **Sensor Fusion:** Time-synchronized fusion of semantic masks with LiDAR range data, projecting 2D class labels into a consistent 3D spatial map via calibrated extrinsics.
 
-### 2. Navigation & Topology Layer
-- **Semantic Nav2 Costmap:** A custom Nav2 costmap plugin (`semantic_layer.cpp`) that ingests semantic-fused point clouds and applies per-class inflation radii and cost weighting — enabling behaviors like "avoid humans by 5m, trees by 1m" as a declarative policy rather than hardcoded logic.
-- **Topology & Terrain Mapping:** Continuous terrain modeling from LiDAR + vision to support contour-following flight and autonomous identification of flat, obstruction-free landing candidates, ranked by slope, roughness, and semantic clearance.
-- **Altitude & Z-Axis Control:** Dedicated altitude-hold and vertical velocity control loops tuned for stability across varying terrain, with smooth descent profiles for precision landing.
+- **Depth processing:** Converts the Gazebo depth-camera `PointCloud2` stream into 64 polar range sectors with validity information.
+- **Temporal observations:** Stacks three consecutive observations so PPO can infer changing geometry and future moving-obstacle behavior.
+- **Semantic vision:** The YOLOv8 vision package publishes semantic and debug imagery. Metric semantic-depth fusion is planned for Stage 2.
 
-### 3. Control & Hardware Layer
-- **PX4 Flight Stack Integration:** Industry-standard PX4 firmware handles low-level motor mixing, stabilization, and failsafe logic, decoupling high-level autonomy from flight-critical control.
-- **Micro XRCE-DDS Bridge:** Low-latency, real-time bridge between ROS 2 decision-making nodes and the PX4 flight controller.
-- **Edge Optimization:** Inference and point cloud pipelines are profiled and optimized specifically for the Jetson Nano's Maxwell GPU and ARM CPU — model quantization, frame skipping under load, and asynchronous pipeline staging keep the control loop within real-time bounds.
+### 2. Planning & RL Navigation Layer
 
-### 4. Ground Control Station (Web UI)
-- **Real-time Telemetry & Map:** A modern web-based control center that streams the drone's live GPS location, traces its historical flight path on an interactive map, and monitors system vitals.
-- **Video & Semantic Streaming:** Live low-latency video streaming of the drone's primary camera and overlaid semantic segmentation masks.
-- **Remote Command:** Set target destination waypoints (Latitude/Longitude) directly from the map interface to command the drone.
+- **Global planning:** Nav2 NavFn generates a global path from the current vehicle pose to the mission goal.
+- **Rolling local target:** A path-tracking node selects a look-ahead target along the global route.
+- **PPO local control:** The policy observes depth, local and global goal geometry, path error, velocity, yaw rate, obstacle direction, and previous actions.
+- **Obstacle deflection:** PPO outputs bounded forward velocity, lateral velocity, and yaw rate, allowing the drone to steer around obstacles and recover the route.
+- **Commissioning baseline:** A deterministic deflection controller is available when no trained model is supplied. It exists for integration testing and comparison, not as a replacement for PPO training.
+
+### 3. Mission, Safety & PX4 Layer
+
+- **Mission manager:** Owns the autonomous lifecycle from preflight through takeoff, planning, RL navigation, obstacle deflection, path recovery, landing, and disarming.
+- **Safety supervisor:** Rejects invalid or stale policy output, enforces speed and acceleration limits, applies warning-zone slowing, and commands a stop inside the hard-clearance boundary.
+- **PX4 adapter:** Is the only component allowed to publish PX4 offboard topics. It owns ROS ENU to PX4 NED coordinate conversion and deterministic altitude control during Stage 1.
+- **Failure handling:** Unsafe conditions trigger emergency hold, replanning when conditions recover, or failsafe landing after a persistent emergency.
+
+```text
+Mission Goal
+    │
+    ▼
+Mission Manager ──► Nav2 Global Planner ──► Rolling Local Target
+                                                    │
+Depth PointCloud ──► 64 Sectors ──► PPO Policy ◄────┘
+                                      │
+                                      ▼
+                              Safety Supervisor
+                                      │
+                                      ▼
+                         PX4 ENU/NED Adapter ──► PX4 SITL
+```
+
 ---
 
 ## Project Structure
 
 ```text
-semantic_drone_project/
-├── Dockerfile                  # Containerized Ubuntu 22.04 + ROS 2 Humble environment
-├── run_docker.sh               # Build and launch the dev container (with X11 forwarding)
-├── setup_simulation.sh         # Clone and build PX4 SITL
-├── yolov8n-seg.pt              # Base YOLOv8 Nano segmentation weights
+vyoma/
+├── Dockerfile                         # ROS 2 Humble development image
+├── requirements.txt                   # Pinned Python and RL dependencies
+├── run_docker.sh                      # Build and enter the development container
+├── run_simulation.sh                  # Build and launch the complete Stage 1 stack
+├── setup_bridge.sh                    # Pinned XRCE-DDS and px4_msgs setup
+├── setup_simulation.sh                # Pinned PX4 SITL setup
 ├── simulation/
-│   ├── models/                 # Custom Gazebo models (Quadcopter, Camera, LiDAR)
-│   └── worlds/                 # Custom Gazebo simulation worlds (topology testing)
-├── control_center/             # Modern Web App (React/Vite) for the Ground Control Station
+│   └── worlds/training_world.world    # Canonical Gazebo training world
 └── src/
-    ├── semantic_nav_pkg/       # C++ ROS 2 package: Nav2 plugins, LiDAR processing, topology
-    └── semantic_vision_pkg/    # Python ROS 2 package: YOLO inference, camera feeds
+    ├── semantic_nav_pkg/              # Mission, planning, safety, depth and PX4 nodes
+    ├── semantic_vision_pkg/           # YOLOv8 camera perception
+    └── rl_navigation_pkg/             # PPO observation, training and inference
 ```
+
+---
+
+## Current Capability
+
+| Capability | Status |
+| :--- | :--- |
+| Containerized ROS 2/PX4 environment | Implemented; clean Docker build validation pending |
+| Pinned PX4, `px4_msgs`, XRCE-DDS and Python dependencies | Implemented |
+| ENU/NED coordinate conversion | Implemented and unit tested |
+| Autonomous mission state machine | Implemented |
+| Nav2 global-planner integration | Implemented; SITL validation pending |
+| 64-sector depth observation | Implemented |
+| Three-frame PPO observation history | Implemented |
+| Three-axis local RL action contract | Implemented |
+| Deterministic safety supervisor | Implemented and unit tested |
+| Commissioning obstacle-deflection baseline | Implemented |
+| Trained and accepted PPO checkpoint | Not yet available |
+| Semantic depth fusion | Planned for Stage 2 |
+| Learned vertical avoidance | Planned for Stage 3 |
+| Real-aircraft deployment | Blocked until simulation acceptance passes |
+
+The repository currently provides the architecture and training/runtime contracts for Stage 1. It does not include a pre-trained policy, and the complete Gazebo mission acceptance suite has not yet been run.
 
 ---
 
 ## Getting Started (Simulation)
 
-The full environment is containerized to eliminate ROS 2 dependency conflicts across host systems (particularly relevant for non-Ubuntu developers, e.g. Arch Linux).
-
 ### Prerequisites
-- Docker installed and running
-- An X11 server for GUI forwarding (Gazebo rendering)
-- 8GB+ RAM recommended for SITL + Gazebo + inference concurrently
 
-### Installation
+- Docker with the daemon running
+- X11 server for Gazebo and RViz
+- 8 GB RAM minimum; more is recommended for training
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/yourusername/semantic_drone_project.git
-   cd semantic_drone_project
-   ```
+### One-Time Setup
 
-2. **Build and launch the development container:**
+1. Start the development container:
+
    ```bash
    chmod +x run_docker.sh
    ./run_docker.sh
    ```
-   X11 forwarding is handled automatically inside the script.
 
-3. **Set up PX4 SITL** (inside the container):
+2. Inside the container, install the pinned bridge and simulation dependencies:
+
    ```bash
-   chmod +x setup_simulation.sh
+   ./setup_bridge.sh
    ./setup_simulation.sh
-   ```
-
-4. **Build the ROS 2 workspace:**
-   ```bash
-   colcon build
+   colcon build --symlink-install
    source install/setup.bash
    ```
+
+### Launch the Autonomous Stack
+
+From the host, while the `vyoma-dev` container is running:
+
+```bash
+./run_simulation.sh
+```
+
+On Windows with Docker Desktop, an existing development container, and WSLg:
+
+```powershell
+.\run_simulation.ps1 -Gui
+```
+
+This opens Gazebo's actual 3D world. The current simulated vehicle is PX4's
+`x500_depth`, a commissioning stand-in for the planned S500 hardware.
+Without `-Gui`, the PowerShell launcher runs headless. `-Training` keeps the
+policy node in observation-only mode. `-Duration 60` stops a bounded session
+60 seconds after PX4 telemetry becomes ready; omit it for an interactive run.
+
+The managed session waits for PX4 odometry and status, writes component logs
+under `artifacts/simulation/`, and stops its owned processes on exit or component
+failure. It uses a fresh PX4 working directory for each launch and supplies a
+heartbeat-only ground station on loopback for headless SITL. It does not disable
+PX4 arming checks. Keep the real-aircraft operator link independent of this
+simulation helper.
+
+Launcher builds are kept inside the container under `/tmp/vyoma-runtime/` to
+avoid reusing CMake caches from a different host mount. Source
+`/tmp/vyoma-runtime/install/setup.bash` in additional terminals. PowerShell
+accepts `-Workspace`, `-InstallPath`, `-BuildBase`, and `-Px4Source` overrides;
+the shell launcher accepts `VYOMA_WORKSPACE`, `VYOMA_INSTALL`, and
+`VYOMA_BUILD_BASE`. Use `-SkipBuild` or `VYOMA_SKIP_BUILD=1` only for an already
+built runtime.
+
+Submit an autonomous mission goal from another sourced container terminal:
+
+```bash
+ros2 topic pub --once /vyoma/mission/command geometry_msgs/msg/PoseStamped \
+  "{header: {frame_id: map}, pose: {position: {x: 8.0, y: 0.0, z: 0.0}, orientation: {w: 1.0}}}"
+```
+
+Without a model path, the stack uses the commissioning controller. To run an accepted PPO checkpoint:
+
+```bash
+ros2 launch semantic_nav_pkg autonomous.launch.py \
+  model_path:=/absolute/path/ppo_drone_nav.zip
+```
+
+The model must have a matching `.metadata.json` file containing the observation schema, tensor sizes, algorithm, seed, Python version, and source revision.
+
+---
+
+## PPO Training
+
+Start the autonomy stack with the policy node publishing observations only,
+then start training in another sourced terminal:
+
+```bash
+ros2 launch semantic_nav_pkg autonomous.launch.py \
+  use_rviz:=false training:=true
+
+ros2 run rl_navigation_pkg train_node
+```
+
+The Stage 1 observation contains:
+
+- 64 normalized depth sectors and 64 validity values
+- Local-target distance and bearing
+- Final-goal distance and bearing
+- Cross-track and heading error
+- Forward/lateral velocity and yaw rate
+- Previous three-axis action
+- Closest-obstacle distance and direction
+- Path-blocked indicator
+- Three-frame temporal history
+
+The action is `[forward velocity, lateral velocity, yaw rate]`. Rewards favor route progress, safe obstacle clearance, smooth control, path recovery, and mission completion. Collisions, unsafe proximity, oscillation, control jerk, and safety overrides are penalized.
+
+Training artifacts are written below `artifacts/`. A completed training run is not automatically approved for autonomous use; it must pass held-out seeded missions and failure-injection tests.
+
+---
+
+## Public ROS Interfaces
+
+| Topic | Message | Purpose |
+| :--- | :--- | :--- |
+| `/vyoma/mission/command` | `geometry_msgs/PoseStamped` | Authorized simulation goal |
+| `/vyoma/mission/state` | `std_msgs/String` JSON | Timestamped mission state and reason |
+| `/vyoma/px4/status` | `std_msgs/String` JSON | PX4 connection and flight status |
+| `/vyoma/depth/sectors` | `sensor_msgs/LaserScan` | Timestamped 64-sector depth observation |
+| `/vyoma/global_path` | `nav_msgs/Path` | Nav2-generated route |
+| `/vyoma/local_target` | `geometry_msgs/PoseStamped` | Rolling PPO target |
+| `/vyoma/rl/observation` | `std_msgs/Float32MultiArray` | Versioned stacked policy observation |
+| `/vyoma/rl/raw_action` | `geometry_msgs/TwistStamped` | Policy command before safety filtering |
+| `/vyoma/control/safe_command` | `geometry_msgs/TwistStamped` | Supervisor-approved body-frame command |
+| `/vyoma/safety/status` | `std_msgs/String` JSON | Clearance, override state, and reason |
+| `/vyoma/navigation/blocked` | `std_msgs/Bool` | Global replanning request |
+
+---
+
+## Tests
+
+From the repository root, run `python -m pytest -q`. The root `pytest.ini`
+configures both Python package paths. Outside ROS, node-level tests are skipped;
+the deterministic mission, safety, frame, path, observation, scenario, and reset
+tests still run with only NumPy and pytest installed.
+
+For node-level regression checks, source `/opt/ros/humble/setup.bash` and your
+built workspace's `install/setup.bash`, then run the same command. These checks
+exercise the ROS callbacks and message contracts; they do not replace live
+Gazebo reset cycles, flight missions, or trained-policy acceptance.
+
+ROS tests run in DDS domain 196 to keep test publishers away from live
+simulation. Set `VYOMA_TEST_DOMAIN_ID` if that domain is already in use.
+
+With the simulation running, measure a short commissioning mission from another
+sourced container terminal at the repository root:
+
+```bash
+python3 scripts/mission_smoke.py --x 1.5 --y 0.0 --timeout 180
+```
+
+The JSON result records mission phases, actual arming, altitude, path length,
+navigation clearance, final goal distance, and elapsed wall time. A successful
+lifecycle alone is insufficient: the smoke check also requires landing within
+0.75m of the goal. This short mission is an integration check, not an obstacle
+avoidance or policy acceptance result.
 
 ---
 
 ## Roadmap & Current Status
 
-### Phase 1: Environment & Bridge Setup
-- [x] Dockerized ROS 2 Humble environment configuration
-- [x] PX4 SITL & Gazebo build scripts
-- [x] Micro XRCE-DDS bridge setup & telemetry verification
+### Phase 1: Geometry-Based RL Autopilot
 
-### Phase 2: Perception
-- [x] YOLOv8 vision node (camera subscription & mask publishing)
+- [x] Separate mission, safety, planning, RL and PX4 responsibilities
+- [x] Implement fixed-shape depth observation and temporal history
+- [x] Implement forward/lateral/yaw PPO action interface
+- [x] Implement deterministic safety boundary
+- [x] Add global replanning and route-recovery states
+- [ ] Complete clean Docker/PX4/Gazebo integration validation
+- [ ] Build reliable Gazebo episode reset and randomization
+- [ ] Train PPO curriculum for static obstacle deflection
+- [ ] Evaluate at least 100 unseen seeded missions
+- [ ] Reach the Stage 1 success and safety thresholds
 
-### Phase 3: Core Flight Control
-- [x] Autopilot state machine (Takeoff, Navigate, Land)
-- [x] Basic reactive obstacle dodging
+### Phase 2: Semantic Autonomy
 
-### Phase 4: LiDAR Obstacle Detection
-- [ ] LiDAR point cloud processing node
-- [ ] Emergency stop based on proximity
+- [ ] Project YOLO detections through metric depth
+- [ ] Add semantic class channels to the PPO observation
+- [ ] Train class-aware clearance behavior
+- [ ] Evaluate humans, vehicles, vegetation, structures and unknown obstacles
 
-### Phase 5: Nav2 Path Planning
-- [ ] Nav2 semantic costmap integration
-- [ ] Global & Local Path Planning (A* / DWB)
+### Phase 3: Dynamic & 3D Autonomy
 
-### Phase 6: Topology & Terrain
-- [ ] Topology mapping & altitude control logic
+- [ ] Train crossing and head-on moving-obstacle scenarios
+- [ ] Add upward and downward clearance observations
+- [ ] Add bounded vertical velocity to the PPO action
+- [ ] Train climb-over, descend-under and lateral-around decisions
 
-### Phase 7: Ground Control Station (GCS)
-- [ ] Web UI, Telemetry, Video Stream, Waypoint Control
+### Phase 4: Hardware Readiness
 
-### Phase 8: Real-World Deployment
-- [ ] Hardware deployment (Jetson Nano + Pixhawk)
-- [ ] Real-world flight testing
+- [ ] Reproduce accepted policies on Jetson hardware-in-the-loop
+- [ ] Add physical kill switch and operator arming controls
+- [ ] Complete a separate flight-safety review
+- [ ] Begin controlled Pixhawk/Jetson flight testing
+
+---
+
+## Safety Notice
+
+Vyoma is research software and is not approved for operation on a real aircraft. Simulation success alone is insufficient for hardware deployment. Real flight requires hardware-in-the-loop validation, explicit operator authorization, independent emergency controls, geofencing, and a dedicated safety review.
 
 ---
 
 ## Contributing
 
-Issues and PRs are welcome, particularly around costmap plugin performance, Jetson inference optimization, and simulation world diversity. Please open an issue before submitting large architectural changes.
+Contributions should preserve the authority boundary: PPO may control local navigation, but PX4 stabilization and the deterministic safety supervisor remain authoritative. Particularly useful contributions include simulation curriculum design, reset reliability, policy evaluation, semantic-depth projection, and failure-injection testing.
 
 ## License
 

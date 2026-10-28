@@ -16,7 +16,7 @@ setup(
     maintainer='Rahul',
     maintainer_email='rahul@todo.todo',
     description='YOLO Vision Node',
-    license='TODO',
+    license='Proprietary',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [

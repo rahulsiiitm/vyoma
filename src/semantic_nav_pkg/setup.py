@@ -24,8 +24,12 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'autopilot_node = semantic_nav_pkg.autopilot_node:main',
-            'lidar_processor_node = semantic_nav_pkg.lidar_processor_node:main'
+            'depth_sector_node = semantic_nav_pkg.depth_sector_node:main',
+            'global_planner_node = semantic_nav_pkg.global_planner_node:main',
+            'local_target_node = semantic_nav_pkg.local_target_node:main',
+            'mission_manager_node = semantic_nav_pkg.mission_manager_node:main',
+            'px4_adapter_node = semantic_nav_pkg.px4_adapter_node:main',
+            'safety_supervisor_node = semantic_nav_pkg.safety_supervisor_node:main'
         ],
     },
 )
