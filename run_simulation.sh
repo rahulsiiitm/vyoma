@@ -1,33 +1,33 @@
 #!/bin/bash
 set -euo pipefail
 
-CONTAINER_ID=$(docker ps -q -f name=vyoma-dev)
-if [ -z "$CONTAINER_ID" ]; then
+CONTAINER_NAME=${VYOMA_CONTAINER:-vyoma-dev}
+WORKSPACE=${VYOMA_WORKSPACE:-/home/drone_user/workspace}
+INSTALL=${VYOMA_INSTALL:-/tmp/vyoma-runtime/install}
+BUILD_BASE=${VYOMA_BUILD_BASE:-/tmp/vyoma-runtime/build}
+if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || true)" != true ]; then
   echo "Vyoma container is not running. Start it with ./run_docker.sh first."
   exit 1
 fi
 
-docker exec "$CONTAINER_ID" bash -lc \
-  "cd ~/workspace && colcon build --symlink-install --packages-select px4_msgs semantic_nav_pkg semantic_vision_pkg rl_navigation_pkg"
+# Keep paths and arguments literal by passing them positionally.
+if [ "${VYOMA_SKIP_BUILD:-0}" != 1 ]; then
+  docker exec "$CONTAINER_NAME" bash -lc '
+    set -e
+    source /opt/ros/humble/setup.bash
+    cd "$1"
+    colcon --log-base /tmp/vyoma-runtime/log build --build-base "$2" --install-base "$3" \
+      --symlink-install --packages-select px4_msgs semantic_nav_pkg semantic_vision_pkg rl_navigation_pkg
+  ' vyoma-build "$WORKSPACE" "$BUILD_BASE" "$INSTALL"
+fi
 
-docker exec "$CONTAINER_ID" bash -lc \
-  "pkill -x MicroXRCEAgent || true; pkill -x parameter_bridge || true; \
-  pkill -x planner_server || true; pkill -x px4 || true; pkill -x gz-server || true; \
-  pkill -f '^/opt/ros/humble/lib/ros_gz_bridge/parameter_bridge' || true"
-
-docker exec -d -e PX4_GZ_WORLD=training_world "$CONTAINER_ID" bash -lc \
-  "cd ~/workspace/simulation/PX4-Autopilot && make px4_sitl gz_x500_depth"
-docker exec -d -e FASTDDS_BUILTIN_TRANSPORTS=UDPv4 "$CONTAINER_ID" bash -lc \
-  "source /opt/ros/humble/setup.bash && MicroXRCEAgent udp4 -p 8888"
-docker exec -d "$CONTAINER_ID" bash -lc \
-  "source /opt/ros/humble/setup.bash && ros2 run ros_gz_bridge parameter_bridge \
-  /world/training_world/model/x500_depth_0/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image@gz.msgs.Image \
-  /depth_camera/points@sensor_msgs/msg/PointCloud2@gz.msgs.PointCloudPacked \
-  /clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock \
-  /world/training_world/control@ros_gz_interfaces/srv/ControlWorld \
-  --ros-args -r /world/training_world/model/x500_depth_0/link/camera_link/sensor/IMX214/image:=/camera/image_raw"
-
-sleep 10
-docker exec -it "$CONTAINER_ID" bash -lc \
-  "source /opt/ros/humble/setup.bash && source ~/workspace/install/setup.bash && \
-  ros2 launch semantic_nav_pkg autonomous.launch.py"
+EXEC_OPTIONS=(-i)
+if [ -t 0 ] && [ -t 1 ]; then EXEC_OPTIONS+=(-t); fi
+docker exec "${EXEC_OPTIONS[@]}" "$CONTAINER_NAME" bash -lc '
+  set -e
+  source /opt/ros/humble/setup.bash
+  source "$2/setup.bash"
+  workspace=$1
+  shift 2
+  exec python3 "$workspace/scripts/simulation_session.py" --workspace "$workspace" "$@"
+' vyoma-session "$WORKSPACE" "$INSTALL" "$@"
