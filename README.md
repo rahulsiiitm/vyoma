@@ -3,7 +3,7 @@
 ![Vyoma Workbench](assets/banner.jpg)
 [![ROS 2](https://img.shields.io/badge/ROS_2-Humble-blue.svg)](https://docs.ros.org/en/humble/)
 [![Simulation](https://img.shields.io/badge/Simulation-PX4%20SITL-orange.svg)](https://px4.io/)
-[![Hardware](https://img.shields.io/badge/Hardware-Jetson_Nano-green.svg)](https://developer.nvidia.com/embedded/jetson-nano-developer-kit)
+[![Hardware](https://img.shields.io/badge/Hardware-Jetson_Orin_Nano_Super-green.svg)](https://developer.nvidia.com/embedded/learn/get-started-jetson-orin-nano-devkit)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Active_Development-yellow.svg)]()
 
@@ -140,6 +140,33 @@ From the host, while the `vyoma-dev` container is running:
 ./run_simulation.sh
 ```
 
+On Windows with Docker Desktop, an existing development container, and WSLg:
+
+```powershell
+.\run_simulation.ps1 -Gui
+```
+
+This opens Gazebo's actual 3D world. The current simulated vehicle is PX4's
+`x500_depth`, a commissioning stand-in for the planned S500 hardware.
+Without `-Gui`, the PowerShell launcher runs headless. `-Training` keeps the
+policy node in observation-only mode. `-Duration 60` stops a bounded session
+60 seconds after PX4 telemetry becomes ready; omit it for an interactive run.
+
+The managed session waits for PX4 odometry and status, writes component logs
+under `artifacts/simulation/`, and stops its owned processes on exit or component
+failure. It uses a fresh PX4 working directory for each launch and supplies a
+heartbeat-only ground station on loopback for headless SITL. It does not disable
+PX4 arming checks. Keep the real-aircraft operator link independent of this
+simulation helper.
+
+Launcher builds are kept inside the container under `/tmp/vyoma-runtime/` to
+avoid reusing CMake caches from a different host mount. Source
+`/tmp/vyoma-runtime/install/setup.bash` in additional terminals. PowerShell
+accepts `-Workspace`, `-InstallPath`, `-BuildBase`, and `-Px4Source` overrides;
+the shell launcher accepts `VYOMA_WORKSPACE`, `VYOMA_INSTALL`, and
+`VYOMA_BUILD_BASE`. Use `-SkipBuild` or `VYOMA_SKIP_BUILD=1` only for an already
+built runtime.
+
 Submit an autonomous mission goal from another sourced container terminal:
 
 ```bash
@@ -160,11 +187,12 @@ The model must have a matching `.metadata.json` file containing the observation 
 
 ## PPO Training
 
-Start the autonomy stack without the runtime policy node, then start training:
+Start the autonomy stack with the policy node publishing observations only,
+then start training in another sourced terminal:
 
 ```bash
 ros2 launch semantic_nav_pkg autonomous.launch.py \
-  use_rviz:=false run_policy:=false
+  use_rviz:=false training:=true
 
 ros2 run rl_navigation_pkg train_node
 ```
@@ -202,6 +230,36 @@ Training artifacts are written below `artifacts/`. A completed training run is n
 | `/vyoma/control/safe_command` | `geometry_msgs/TwistStamped` | Supervisor-approved body-frame command |
 | `/vyoma/safety/status` | `std_msgs/String` JSON | Clearance, override state, and reason |
 | `/vyoma/navigation/blocked` | `std_msgs/Bool` | Global replanning request |
+
+---
+
+## Tests
+
+From the repository root, run `python -m pytest -q`. The root `pytest.ini`
+configures both Python package paths. Outside ROS, node-level tests are skipped;
+the deterministic mission, safety, frame, path, observation, scenario, and reset
+tests still run with only NumPy and pytest installed.
+
+For node-level regression checks, source `/opt/ros/humble/setup.bash` and your
+built workspace's `install/setup.bash`, then run the same command. These checks
+exercise the ROS callbacks and message contracts; they do not replace live
+Gazebo reset cycles, flight missions, or trained-policy acceptance.
+
+ROS tests run in DDS domain 196 to keep test publishers away from live
+simulation. Set `VYOMA_TEST_DOMAIN_ID` if that domain is already in use.
+
+With the simulation running, measure a short commissioning mission from another
+sourced container terminal at the repository root:
+
+```bash
+python3 scripts/mission_smoke.py --x 1.5 --y 0.0 --timeout 180
+```
+
+The JSON result records mission phases, actual arming, altitude, path length,
+navigation clearance, final goal distance, and elapsed wall time. A successful
+lifecycle alone is insufficient: the smoke check also requires landing within
+0.75m of the goal. This short mission is an integration check, not an obstacle
+avoidance or policy acceptance result.
 
 ---
 
