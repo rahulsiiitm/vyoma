@@ -13,9 +13,7 @@ class VehicleMotion:
 
     @property
     def speed(self) -> float:
-        return math.sqrt(
-            self.velocity_x ** 2 + self.velocity_y ** 2 + self.velocity_z ** 2
-        )
+        return math.hypot(self.velocity_x, self.velocity_y, self.velocity_z)
 
 
 class ResetValidator:
@@ -29,14 +27,18 @@ class ResetValidator:
     ) -> None:
         if required_stable_samples < 1:
             raise ValueError("required_stable_samples must be positive")
+        if not math.isfinite(maximum_speed) or maximum_speed < 0.0:
+            raise ValueError("maximum_speed must be finite and nonnegative")
         self.initial_sequence = initial_sequence
+        self.last_sequence = initial_sequence
         self.maximum_speed = maximum_speed
         self.required_stable_samples = required_stable_samples
         self.stable_samples = 0
 
     def observe(self, motion: VehicleMotion) -> bool:
-        if motion.sequence <= self.initial_sequence:
+        if motion.sequence <= self.last_sequence:
             return False
+        self.last_sequence = motion.sequence
         if not math.isfinite(motion.speed) or motion.speed > self.maximum_speed:
             self.stable_samples = 0
             return False

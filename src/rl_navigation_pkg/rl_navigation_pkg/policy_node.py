@@ -149,8 +149,9 @@ class PolicyNode(Node):
         front_indices = list(range(center - front_width, center + front_width + 1))
         front = float(np.min(ranges[front_indices]))
         if front < 2.0:
-            left = float(np.mean(ranges[:count // 2]))
-            right = float(np.mean(ranges[count // 2:]))
+            # LaserScan angles increase from -pi (right) toward +pi (left).
+            left = float(np.mean(ranges[count // 2:]))
+            right = float(np.mean(ranges[:count // 2]))
             lateral = 1.0 if left > right else -1.0
             return np.asarray([max(0.0, (front - 0.75) / 1.25) * 0.35,
                                lateral, np.clip(target_bearing / math.pi, -1.0, 1.0)], dtype=np.float32)

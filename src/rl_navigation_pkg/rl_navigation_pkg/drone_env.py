@@ -65,7 +65,8 @@ class DroneEnv(gym.Env, Node):
 
     def observation_callback(self, msg):
         values = np.asarray(msg.data, dtype=np.float32)
-        if values.shape == (OBSERVATION_SIZE,):
+        if (values.shape == (OBSERVATION_SIZE,) and np.all(np.isfinite(values))
+                and np.all(np.abs(values) <= 1.0)):
             self.observation = values
             self.observation_sequence += 1
 
@@ -96,9 +97,13 @@ class DroneEnv(gym.Env, Node):
         try:
             status = json.loads(msg.data)
             self.safety_override = bool(status.get('override', False))
-            self.clearance = float(status.get('minimum_clearance') or 10.0)
+            clearance = status.get('minimum_clearance')
+            self.clearance = 0.0 if clearance is None else float(clearance)
+            if not math.isfinite(self.clearance) or self.clearance < 0.0:
+                raise ValueError('invalid clearance')
         except (ValueError, TypeError):
             self.safety_override = True
+            self.clearance = 0.0
 
     def distance_to_goal(self):
         if self.odom is None:
@@ -132,6 +137,8 @@ class DroneEnv(gym.Env, Node):
 
     def step(self, action):
         action = np.asarray(action, dtype=np.float32)
+        if not self.action_space.contains(action):
+            raise ValueError('action must contain three finite values in [-1, 1]')
         sequence = self.observation_sequence
         self.publish_action(action)
         if not self.wait_for_observation(sequence):
@@ -157,7 +164,15 @@ class DroneEnv(gym.Env, Node):
         self.publish_action(np.zeros(3, dtype=np.float32))
         for name, client in self.component_reset_clients.items():
             self.reset_component(name, client)
-        self.reset_component('policy', self.policy_reset_client, required=False)
+        self.reset_component('policy', self.policy_reset_client)
+        self.path = None
+        self.odom = None
+        self.observation.fill(0.0)
+        self.previous_distance = None
+        self.previous_action.fill(0.0)
+        self.step_count = 0
+        self.safety_override = True
+        self.clearance = 0.0
         initial_sequence = self.odom_sequence
         if not self.reset_client.wait_for_service(timeout_sec=2.0):
             raise RuntimeError('Gazebo reset service is unavailable')
@@ -169,7 +184,7 @@ class DroneEnv(gym.Env, Node):
         if not future.done() or future.exception() is not None:
             raise RuntimeError('Gazebo reset request timed out or failed')
         response = future.result()
-        if hasattr(response, 'success') and not response.success:
+        if response is None or not response.success:
             raise RuntimeError('Gazebo rejected the episode reset request')
 
         validator = ResetValidator(initial_sequence=initial_sequence)
@@ -207,14 +222,9 @@ class DroneEnv(gym.Env, Node):
         for _ in range(3):
             self.goal_pub.publish(goal)
             rclpy.spin_once(self, timeout_sec=0.1)
-        self.path = None
         if not self.wait_for_observation(self.observation_sequence):
             raise RuntimeError('no observation published after reset')
-        self.previous_distance = None
-        self.previous_action.fill(0.0)
-        self.step_count = 0
-        self.safety_override = False
-        self.clearance = 10.0
+        self.previous_distance = self.distance_to_goal()
         return self.observation.copy(), {
             'seed': episode_seed,
             'goal': self.goal.tolist(),

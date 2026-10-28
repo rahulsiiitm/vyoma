@@ -58,7 +58,7 @@ def main(args=None):
     
     try:
         # Train the model
-        model.learn(total_timesteps=100000, progress_bar=True)
+        model.learn(total_timesteps=100000)
         save_checkpoint(model, model_path, completed=True)
     except KeyboardInterrupt:
         print("Training interrupted! Saving current progress...")
