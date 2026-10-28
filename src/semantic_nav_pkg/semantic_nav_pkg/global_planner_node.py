@@ -13,7 +13,8 @@ class GlobalPlannerNode(Node):
         self.client = ActionClient(self, ComputePathToPose, 'compute_path_to_pose')
         self.path_pub = self.create_publisher(Path, '/vyoma/global_path', 10)
         self.goal = None
-        self.create_subscription(PoseStamped, '/vyoma/mission/command', self.goal_callback, 10)
+        # Planning is requested by the mission manager after takeoff, when the
+        # horizontal costmap represents flight-level obstacles rather than floor.
         self.create_subscription(PoseStamped, '/goal_pose', self.goal_callback, 10)
         self.create_subscription(Bool, '/vyoma/navigation/blocked', self.blocked_callback, 10)
 

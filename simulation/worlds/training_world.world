@@ -1,6 +1,22 @@
 <?xml version="1.0" ?>
 <sdf version="1.7">
   <world name="training_world">
+    <!-- Match the pinned PX4 reference world's estimator environment. -->
+    <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg>8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+    </spherical_coordinates>
     <!-- Self-contained lighting and ground; no external model cache required. -->
     <light name="sun" type="directional">
       <cast_shadows>true</cast_shadows>
@@ -27,20 +43,20 @@
 
     <!-- Obstacles for RL Training -->
     <model name="box1">
-      <pose>3 0 0.5 0 0 0</pose>
+      <pose>3 0 4 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <collision name="collision">
           <geometry>
             <box>
-              <size>1 1 1</size>
+              <size>1 1 8</size>
             </box>
           </geometry>
         </collision>
         <visual name="visual">
           <geometry>
             <box>
-              <size>1 1 1</size>
+              <size>1 1 8</size>
             </box>
           </geometry>
           <material>
@@ -51,14 +67,14 @@
     </model>
 
     <model name="cylinder_1">
-      <pose>5 2 1 0 0 0</pose>
+      <pose>5 2 4 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <collision name="collision">
           <geometry>
             <cylinder>
               <radius>0.5</radius>
-              <length>2</length>
+              <length>8</length>
             </cylinder>
           </geometry>
         </collision>
@@ -66,7 +82,7 @@
           <geometry>
             <cylinder>
               <radius>0.5</radius>
-              <length>2</length>
+              <length>8</length>
             </cylinder>
           </geometry>
           <material>
@@ -77,20 +93,20 @@
     </model>
 
     <model name="box2">
-      <pose>7 -1 0.5 0 0 0</pose>
+      <pose>7 -1 4 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <collision name="collision">
           <geometry>
             <box>
-              <size>1 2 1</size>
+              <size>1 2 8</size>
             </box>
           </geometry>
         </collision>
         <visual name="visual">
           <geometry>
             <box>
-              <size>1 2 1</size>
+              <size>1 2 8</size>
             </box>
           </geometry>
           <material>
@@ -102,53 +118,53 @@
 
     <!-- Walls surrounding the training area -->
     <model name="wall_n">
-      <pose>10 0 1 0 0 0</pose>
+      <pose>10 0 4 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>0.1 10 2</size></box></geometry>
+          <geometry><box><size>0.1 10 8</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>0.1 10 2</size></box></geometry>
+          <geometry><box><size>0.1 10 8</size></box></geometry>
         </visual>
       </link>
     </model>
     
     <model name="wall_s">
-      <pose>-2 0 1 0 0 0</pose>
+      <pose>-2 0 4 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>0.1 10 2</size></box></geometry>
+          <geometry><box><size>0.1 10 8</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>0.1 10 2</size></box></geometry>
+          <geometry><box><size>0.1 10 8</size></box></geometry>
         </visual>
       </link>
     </model>
     
     <model name="wall_e">
-      <pose>4 5 1 0 0 0</pose>
+      <pose>4 5 4 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>12 0.1 2</size></box></geometry>
+          <geometry><box><size>12 0.1 8</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>12 0.1 2</size></box></geometry>
+          <geometry><box><size>12 0.1 8</size></box></geometry>
         </visual>
       </link>
     </model>
     
     <model name="wall_w">
-      <pose>4 -5 1 0 0 0</pose>
+      <pose>4 -5 4 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>12 0.1 2</size></box></geometry>
+          <geometry><box><size>12 0.1 8</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>12 0.1 2</size></box></geometry>
+          <geometry><box><size>12 0.1 8</size></box></geometry>
         </visual>
       </link>
     </model>

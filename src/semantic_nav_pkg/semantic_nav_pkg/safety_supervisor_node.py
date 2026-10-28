@@ -82,6 +82,8 @@ class SafetySupervisorNode(Node):
     def watchdog(self):
         now = self.get_clock().now()
         if self.last_action_time is None or (now - self.last_action_time).nanoseconds / 1e9 > self.timeout:
+            self.previous = (0.0, 0.0, 0.0)
+            self.last_time = now
             output = TwistStamped()
             output.header.stamp = now.to_msg()
             output.header.frame_id = 'base_link'

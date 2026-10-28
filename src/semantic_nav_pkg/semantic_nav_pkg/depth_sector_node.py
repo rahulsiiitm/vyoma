@@ -1,10 +1,10 @@
 import math
 
-import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
+from .depth import sector_ranges
 
 
 class DepthSectorNode(Node):
@@ -22,22 +22,14 @@ class DepthSectorNode(Node):
         self.create_subscription(PointCloud2, '/depth_camera/points', self.callback, 10)
 
     def callback(self, cloud: PointCloud2) -> None:
-        ranges = np.full(self.count, np.inf, dtype=np.float32)
-        for x, y, z in point_cloud2.read_points(cloud, field_names=('x', 'y', 'z'), skip_nans=True):
-            x, y, z = float(x), float(y), float(z)
-            if not self.minimum_height <= z <= self.maximum_height:
-                continue
-            distance = math.hypot(x, y)
-            if distance <= 0.0 or distance > self.maximum_range:
-                continue
-            angle = math.atan2(y, x)
-            index = min(self.count - 1, int(((angle + math.pi) / (2.0 * math.pi)) * self.count))
-            ranges[index] = min(ranges[index], distance)
+        points = point_cloud2.read_points_numpy(cloud, field_names=('x', 'y', 'z'), skip_nans=True)
+        ranges = sector_ranges(points, self.count, self.maximum_range,
+                               self.minimum_height, self.maximum_height)
         scan = LaserScan()
         scan.header = cloud.header
         scan.angle_min = -math.pi
-        scan.angle_max = math.pi
         scan.angle_increment = (2.0 * math.pi) / self.count
+        scan.angle_max = scan.angle_min + (self.count - 1) * scan.angle_increment
         scan.range_min = 0.1
         scan.range_max = self.maximum_range
         scan.ranges = ranges.tolist()

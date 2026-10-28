@@ -8,6 +8,7 @@ mission_manager:
 px4_adapter:
   ros__parameters:
     takeoff_altitude: 5.0
+    vehicle_status_timeout: 1.5
     vehicle_status_topic: /fmu/out/vehicle_status_v4
 
 depth_sector_node:

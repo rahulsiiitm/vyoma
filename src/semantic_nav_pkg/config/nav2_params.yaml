@@ -27,6 +27,7 @@ global_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
+        max_obstacle_height: 6.5
         observation_sources: depth_cloud
         depth_cloud:
           topic: /depth_camera/points
@@ -37,8 +38,9 @@ global_costmap:
           obstacle_max_range: 8.0
           raytrace_min_range: 0.1
           raytrace_max_range: 10.0
-          min_obstacle_height: -1.0
-          max_obstacle_height: 1.0
+          # Stage 1 flies at 5m: these are world-frame heights, not camera offsets.
+          min_obstacle_height: 3.5
+          max_obstacle_height: 6.5
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0

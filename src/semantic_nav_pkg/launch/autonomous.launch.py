@@ -2,7 +2,9 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, EmitEvent, RegisterEventHandler
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -20,6 +22,8 @@ def generate_launch_description():
 
     common = [parameters, {'use_sim_time': use_sim_time}]
     return LaunchDescription([
+        RegisterEventHandler(OnProcessExit(on_exit=[
+            EmitEvent(event=Shutdown(reason='An autonomy process exited; stopping the stack'))])),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         DeclareLaunchArgument('use_rviz', default_value='true'),
         DeclareLaunchArgument('model_path', default_value=''),
@@ -29,7 +33,7 @@ def generate_launch_description():
         Node(package='tf2_ros', executable='static_transform_publisher',
              arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom']),
         Node(package='tf2_ros', executable='static_transform_publisher',
-             arguments=['0.1', '0', '0', '0', '0', '0', 'base_link', 'camera_link']),
+             arguments=['0.12', '0.03', '0.242', '0', '0', '0', 'base_link', 'camera_link']),
         Node(package='nav2_planner', executable='planner_server', name='planner_server',
              output='screen', parameters=[nav2_parameters, {'use_sim_time': use_sim_time}]),
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',

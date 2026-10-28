@@ -1,4 +1,5 @@
 import math
+from copy import deepcopy
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
@@ -6,6 +7,7 @@ from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
 from std_msgs.msg import Bool
 from sensor_msgs.msg import LaserScan
+from .path_tracking import target_index
 
 
 class LocalTargetNode(Node):
@@ -28,11 +30,8 @@ class LocalTargetNode(Node):
             return
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
-        chosen = self.path.poses[-1]
-        for pose in self.path.poses:
-            if math.hypot(pose.pose.position.x - x, pose.pose.position.y - y) >= self.lookahead:
-                chosen = pose
-                break
+        points = [(pose.pose.position.x, pose.pose.position.y) for pose in self.path.poses]
+        chosen = deepcopy(self.path.poses[target_index(points, x, y, self.lookahead)])
         chosen.header.stamp = self.get_clock().now().to_msg()
         self.target_pub.publish(chosen)
 

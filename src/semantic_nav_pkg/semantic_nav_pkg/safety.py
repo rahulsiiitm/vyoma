@@ -34,6 +34,11 @@ def filter_action(
         return SafetyResult((0.0, 0.0, 0.0), True, "invalid_action")
     if not inputs_fresh:
         return SafetyResult((0.0, 0.0, 0.0), True, "stale_input")
+    if not math.isfinite(minimum_clearance) or minimum_clearance < 0.0:
+        return SafetyResult((0.0, 0.0, 0.0), True, "invalid_clearance")
+    if (len(previous) != 3 or not all(math.isfinite(float(value)) for value in previous)
+            or not math.isfinite(dt) or dt <= 0.0):
+        return SafetyResult((0.0, 0.0, 0.0), True, "invalid_state")
     if minimum_clearance < limits.hard_clearance:
         return SafetyResult((0.0, 0.0, 0.0), True, "hard_clearance")
 

@@ -21,6 +21,10 @@ class Px4AdapterNode(Node):
     def __init__(self):
         super().__init__('px4_adapter')
         self.declare_parameter('takeoff_altitude', 5.0)
+        # Commander publishes vehicle_status at 2 Hz when unchanged. Its
+        # freshness budget must allow more than one 500ms publication interval.
+        self.declare_parameter('vehicle_status_timeout', 1.5)
+        self.status_timeout = float(self.get_parameter('vehicle_status_timeout').value)
         self.declare_parameter(
             'vehicle_status_topic', '/fmu/out/vehicle_status_v4')
         self.altitude = float(self.get_parameter('takeoff_altitude').value)
@@ -43,11 +47,13 @@ class Px4AdapterNode(Node):
         self.state = 'DISARMED'
         self.safe_command = (0.0, 0.0, 0.0)
         self.position_enu = (0.0, 0.0, 0.0)
+        self.hold_xy = None
         self.yaw_enu = 0.0
         self.counter = 0
         self.arm_sent = False
         self.last_odom_time = None
         self.last_vehicle_status_time = None
+        self.last_control_time = None
         self.vehicle_status = None
         self.create_timer(0.1, self.timer_callback)
 
@@ -58,10 +64,12 @@ class Px4AdapterNode(Node):
         self.vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0)
         self.state = 'DISARMED'
         self.safe_command = (0.0, 0.0, 0.0)
+        self.hold_xy = None
         self.counter = 0
         self.arm_sent = False
         self.last_odom_time = None
         self.last_vehicle_status_time = None
+        self.last_control_time = None
         self.vehicle_status = None
         response.success = True
         response.message = 'PX4 adapter state reset and disarm requested'
@@ -69,12 +77,25 @@ class Px4AdapterNode(Node):
 
     def state_callback(self, msg):
         try:
-            self.state = json.loads(msg.data)['state']
+            state = json.loads(msg.data)['state']
+            if state != self.state:
+                self.hold_xy = self.position_enu[:2]
+            self.state = state
         except (ValueError, KeyError, TypeError):
             self.state = 'EMERGENCY_HOLD'
 
     def control_callback(self, msg):
-        self.safe_command = (msg.twist.linear.x, msg.twist.linear.y, msg.twist.angular.z)
+        command = (msg.twist.linear.x, msg.twist.linear.y, msg.twist.angular.z)
+        now = self.get_clock().now()
+        stamp_ns = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+        age = (now.nanoseconds - stamp_ns) / 1e9
+        if (msg.header.frame_id != 'base_link' or not 0.0 <= age < 0.5
+                or not all(math.isfinite(value) for value in command)):
+            self.safe_command = (0.0, 0.0, 0.0)
+            self.last_control_time = None
+            return
+        self.safe_command = command
+        self.last_control_time = now
 
     def odom_callback(self, msg):
         self.last_odom_time = self.get_clock().now()
@@ -93,8 +114,9 @@ class Px4AdapterNode(Node):
         out.pose.pose.orientation.w = math.cos(self.yaw_enu / 2.0)
         out.pose.pose.orientation.z = math.sin(self.yaw_enu / 2.0)
         vx, vy, vz = ned_to_enu_vector(*msg.velocity)
-        out.twist.twist.linear.x = float(vx)
-        out.twist.twist.linear.y = float(vy)
+        # Odometry twist is expressed in child_frame_id (base_link).
+        out.twist.twist.linear.x = float(math.cos(self.yaw_enu) * vx + math.sin(self.yaw_enu) * vy)
+        out.twist.twist.linear.y = float(-math.sin(self.yaw_enu) * vx + math.cos(self.yaw_enu) * vy)
         out.twist.twist.linear.z = float(vz)
         self.odom_pub.publish(out)
         transform = TransformStamped()
@@ -123,7 +145,7 @@ class Px4AdapterNode(Node):
         now = self.get_clock().now()
         odom_fresh = self.last_odom_time is not None and (now - self.last_odom_time).nanoseconds / 1e9 < 0.5
         status_fresh = (self.last_vehicle_status_time is not None and
-                        (now - self.last_vehicle_status_time).nanoseconds / 1e9 < 0.5)
+                        0.0 <= (now - self.last_vehicle_status_time).nanoseconds / 1e9 < self.status_timeout)
         status = String()
         status.data = json.dumps({
             'stamp_ns': now.nanoseconds,
@@ -133,8 +155,11 @@ class Px4AdapterNode(Node):
         })
         self.status_pub.publish(status)
         mode = OffboardControlMode()
-        mode.position = False
-        mode.velocity = True
+        position_hold = self.hold_xy is not None and self.state in (
+            'ARMING', 'TAKEOFF', 'GLOBAL_PLAN', 'GOAL_HOLD',
+            'EMERGENCY_HOLD', 'LAND', 'FAILSAFE_LAND')
+        mode.position = position_hold
+        mode.velocity = not position_hold
         mode.timestamp = self.get_clock().now().nanoseconds // 1000
         self.mode_pub.publish(mode)
 
@@ -149,7 +174,9 @@ class Px4AdapterNode(Node):
         if self.state == 'TAKEOFF':
             vz_enu = max(-1.0, min(1.0, altitude_error))
         elif self.state in ('RL_NAVIGATE', 'OBSTACLE_DEFLECTION', 'PATH_RECOVERY'):
-            body_x, body_y, yaw_rate = self.safe_command
+            control_fresh = (self.last_control_time is not None and
+                             0.0 <= (now - self.last_control_time).nanoseconds / 1e9 < 0.5)
+            body_x, body_y, yaw_rate = self.safe_command if control_fresh else (0.0, 0.0, 0.0)
             vx = math.cos(self.yaw_enu) * body_x - math.sin(self.yaw_enu) * body_y
             vy = math.sin(self.yaw_enu) * body_x + math.cos(self.yaw_enu) * body_y
             vz_enu = max(-0.75, min(0.75, altitude_error))
@@ -160,7 +187,8 @@ class Px4AdapterNode(Node):
                 self.arm_sent = False
         ned_velocity = enu_to_ned_vector(vx, vy, vz_enu)
         setpoint = TrajectorySetpoint()
-        setpoint.position = [math.nan, math.nan, math.nan]
+        setpoint.position = ([float(value) for value in enu_to_ned_vector(*self.hold_xy, math.nan)]
+                             if position_hold else [math.nan, math.nan, math.nan])
         setpoint.velocity = list(ned_velocity)
         setpoint.acceleration = [math.nan, math.nan, math.nan]
         setpoint.jerk = [math.nan, math.nan, math.nan]
