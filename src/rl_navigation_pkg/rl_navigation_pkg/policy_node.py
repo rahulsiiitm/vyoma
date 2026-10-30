@@ -16,7 +16,7 @@ from .observation import (OBSERVATION_SIZE, NavigationFeatures, ObservationHisto
 
 
 class PolicyNode(Node):
-    """Runs a validated PPO policy, with a deterministic commissioning baseline."""
+    """Runs a schema-compatible RL policy, with a deterministic commissioning baseline."""
 
     def __init__(self):
         super().__init__('rl_policy_node')
@@ -29,7 +29,7 @@ class PolicyNode(Node):
         self.model = None
         model_path = str(self.get_parameter('model_path').value)
         if model_path:
-            from stable_baselines3 import PPO
+            from stable_baselines3 import PPO, SAC
             if not os.path.exists(model_path):
                 raise FileNotFoundError(model_path)
             metadata_path = (model_path[:-4] if model_path.endswith('.zip') else model_path) + '.metadata.json'
@@ -41,12 +41,16 @@ class PolicyNode(Node):
                 raise RuntimeError('Model observation schema is incompatible')
             if metadata.get('observation_size') != OBSERVATION_SIZE or metadata.get('action_size') != 3:
                 raise RuntimeError('Model tensor shape metadata is incompatible')
-            self.model = PPO.load(model_path)
-            self.get_logger().info(f'Loaded PPO policy: {model_path}, schema={SCHEMA_VERSION}')
+            algorithms = {'PPO': PPO, 'SAC': SAC}
+            algorithm = metadata.get('algorithm')
+            if algorithm not in algorithms:
+                raise RuntimeError(f'Unsupported policy algorithm: {algorithm}')
+            self.model = algorithms[algorithm].load(model_path)
+            self.get_logger().info(f'Loaded {algorithm} policy: {model_path}, schema={SCHEMA_VERSION}')
         elif not bool(self.get_parameter('allow_fallback').value):
-            raise RuntimeError('A validated PPO model is required')
+            raise RuntimeError('A compatible RL model is required')
         else:
-            self.get_logger().warn('No PPO model configured; using commissioning baseline')
+            self.get_logger().warn('No RL model configured; using commissioning baseline')
         self.maximum_range = float(self.get_parameter('maximum_range').value)
         self.publish_action = bool(self.get_parameter('publish_action').value)
         self.history = ObservationHistory()

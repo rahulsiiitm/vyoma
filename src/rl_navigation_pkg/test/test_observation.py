@@ -48,3 +48,11 @@ def test_reward_prefers_progress_and_goal():
     success = calculate_reward(1.0, 0.0, 10.0, np.zeros(3), np.zeros(3), False, True, False)
     collision = calculate_reward(0.0, 0.0, 0.0, np.zeros(3), np.zeros(3), True, False, True)
     assert success > neutral > collision
+
+
+def test_reward_distinguishes_acceleration_limits_from_safety_intervention():
+    args = (0.0, 0.0, 10.0, np.zeros(3), np.zeros(3), True, False, False)
+    rate_limited = calculate_reward(*args, safety_reason='limited')
+    emergency = calculate_reward(*args, safety_reason='stale_input')
+    assert rate_limited == 0.0
+    assert emergency == -3.0

@@ -85,14 +85,17 @@ class ObservationHistory:
 
 def calculate_reward(progress: float, cross_track: float, clearance: float,
                      action: Iterable[float], previous_action: Iterable[float],
-                     safety_override: bool, reached_goal: bool, collision: bool) -> float:
+                     safety_override: bool, reached_goal: bool, collision: bool,
+                     safety_reason: str = '') -> float:
     action_array = np.asarray(tuple(action), dtype=np.float32)
     previous_array = np.asarray(tuple(previous_action), dtype=np.float32)
     reward = (8.0 * progress) - (0.15 * abs(cross_track))
     reward -= 0.05 * float(np.linalg.norm(action_array - previous_array))
     if clearance < 1.5:
         reward -= 2.0 * (1.5 - max(0.0, clearance))
-    if safety_override:
+    # Normal acceleration limiting is expected for exploratory PPO actions;
+    # penalizing it like an emergency can swamp the progress signal.
+    if safety_override and safety_reason != 'limited':
         reward -= 3.0
     if reached_goal:
         reward += 100.0

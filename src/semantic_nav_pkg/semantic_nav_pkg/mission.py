@@ -1,6 +1,7 @@
 """Deterministic mission state machine used by the ROS mission manager."""
 
 from enum import Enum
+import math
 
 
 class MissionState(str, Enum):
@@ -29,6 +30,24 @@ AIRBORNE_STATES = {
     MissionState.EMERGENCY_HOLD,
     MissionState.FAILSAFE_LAND,
 }
+
+
+def goal_hold_progress(distance, speed, hold_started, now, distance_tolerance,
+                       drift_tolerance, speed_tolerance, dwell_duration):
+    """Track a settled goal hold; return (start time, landed-ready, drifted)."""
+    values = (distance, speed, now, distance_tolerance, drift_tolerance,
+              speed_tolerance, dwell_duration)
+    if not all(math.isfinite(float(value)) for value in values):
+        return None, False, False
+    if (distance < 0.0 or speed < 0.0 or distance_tolerance <= 0.0 or
+            drift_tolerance < distance_tolerance or speed_tolerance < 0.0 or dwell_duration <= 0.0):
+        return None, False, False
+    if distance > drift_tolerance:
+        return None, False, True
+    if distance > distance_tolerance or speed > speed_tolerance:
+        return None, False, False
+    started = now if hold_started is None or now < hold_started else hold_started
+    return started, now - started >= dwell_duration, False
 
 
 class MissionMachine:

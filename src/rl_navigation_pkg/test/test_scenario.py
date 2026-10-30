@@ -6,6 +6,7 @@ from rl_navigation_pkg.scenario import (
     ScenarioBounds,
     ScenarioSampler,
     TRAINING_WORLD_EXCLUSIONS,
+    EASY_BOUNDS,
 )
 
 
@@ -34,3 +35,17 @@ def test_impossible_scenario_fails_explicitly():
     )
     with pytest.raises(RuntimeError, match="unable to generate"):
         sampler.sample(1)
+
+
+def test_easy_curriculum_stays_short_and_clear_over_seeded_goals():
+    sampler = ScenarioSampler(bounds=EASY_BOUNDS, exclusions=TRAINING_WORLD_EXCLUSIONS)
+    bearings = []
+    for seed in range(100):
+        goal = sampler.sample(seed)
+        assert 1.2 <= math.hypot(*goal.goal) < 2.9
+        bearings.append(math.degrees(math.atan2(goal.goal_y, goal.goal_x)))
+        for obstacle in TRAINING_WORLD_EXCLUSIONS:
+            assert math.hypot(goal.goal_x - obstacle.x, goal.goal_y - obstacle.y) >= (
+                obstacle.radius + EASY_BOUNDS.goal_clearance)
+    # Bearing-diverse goals: a constant forward command must not solve the curriculum.
+    assert min(bearings) < -60.0 and max(bearings) > 60.0

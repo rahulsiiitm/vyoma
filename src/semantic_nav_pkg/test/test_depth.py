@@ -14,9 +14,17 @@ def test_sectors_keep_nearest_point_and_scan_direction():
 
 
 def test_projection_excludes_out_of_band_and_invalid_points():
-    ranges = sector_ranges([[0, 0, 0], [20, 0, 0], [1, 0, 2], [1, 0, -2],
-                            [math.nan, 1, 0], [math.inf, 0, 0]])
+    ranges = sector_ranges([[0, 0, 0], [math.nan, 1, 0], [math.inf, 0, 0]])
     assert np.all(np.isinf(ranges))
+
+
+def test_observed_sectors_without_obstacles_are_clear_not_unknown():
+    # Far and out-of-band returns prove the sector is in view and clear to
+    # the sensor range; unseen sectors stay unknown.
+    ranges = sector_ranges([[20, 0, 0], [1, 0, 2], [0, 1, -2]])
+    assert ranges[32] == 10.0
+    assert ranges[48] == 10.0
+    assert np.count_nonzero(np.isfinite(ranges)) == 2
 
 
 def test_empty_cloud_and_backward_boundary_are_supported():

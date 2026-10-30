@@ -3,6 +3,7 @@
 
 import argparse
 import fcntl
+import math
 import os
 from pathlib import Path
 import shutil
@@ -108,6 +109,9 @@ def main():
     parser.add_argument('--px4-source', type=Path)
     parser.add_argument('--headless', action='store_true')
     parser.add_argument('--training', action='store_true')
+    parser.add_argument('--model-path', help='PPO checkpoint path visible inside the container')
+    parser.add_argument('--depth-rate', type=float,
+                        help='Request a Gazebo depth-camera rate in Hz (experimental)')
     parser.add_argument('--debug-px4', action='store_true', help='Capture a native backtrace with gdb')
     parser.add_argument('--duration', type=float, help='Stop this many seconds after telemetry readiness')
     parser.add_argument('--startup-timeout', type=float, default=90.0)
@@ -119,6 +123,8 @@ def main():
         parser.error(f'PX4 SITL is not built: {build / "bin/px4"}')
     if args.startup_timeout <= 0 or (args.duration is not None and args.duration <= 0):
         parser.error('timeouts must be positive')
+    if args.depth_rate is not None and (not math.isfinite(args.depth_rate) or args.depth_rate <= 0):
+        parser.error('depth rate must be finite and positive')
     parent = workspace / 'artifacts/simulation'
     parent.mkdir(parents=True, exist_ok=True)
     lock = (parent / 'session.lock').open('w')
@@ -174,10 +180,24 @@ def main():
         group.start('px4', px4_command, cwd=rootfs, env=env)
         wait_for_telemetry(group, args.startup_timeout)
         print('PX4 odometry and vehicle status are streaming.', flush=True)
-        group.start('autonomy', ['ros2', 'launch',
-                    str(workspace / 'src/semantic_nav_pkg/launch/autonomous.launch.py'),
-                    f'use_rviz:={str(not args.headless).lower()}',
-                    f'training:={str(args.training).lower()}'], cwd=workspace, env=env)
+        if args.depth_rate is not None:
+            service = '/depth_camera/set_rate'
+            listed = subprocess.run(['gz', 'service', '-l'], capture_output=True,
+                                    text=True, timeout=10, check=True)
+            if service not in listed.stdout.splitlines():
+                raise RuntimeError(f'Gazebo depth-rate service is unavailable: {service}')
+            subprocess.run(['gz', 'service', '-s', service, '--reqtype', 'gz.msgs.Double',
+                            '--reptype', 'gz.msgs.Empty', '--timeout', '5000',
+                            '--req', f'data: {args.depth_rate}'],
+                           timeout=10, check=True)
+            print(f'Requested depth-camera rate: {args.depth_rate:g} Hz.', flush=True)
+        launch_command = ['ros2', 'launch',
+                          str(workspace / 'src/semantic_nav_pkg/launch/autonomous.launch.py'),
+                          f'use_rviz:={str(not args.headless).lower()}',
+                          f'training:={str(args.training).lower()}']
+        if args.model_path:
+            launch_command.append(f'model_path:={args.model_path}')
+        group.start('autonomy', launch_command, cwd=workspace, env=env)
         deadline = None if args.duration is None else time.monotonic() + args.duration
         while deadline is None or time.monotonic() < deadline:
             group.check()
