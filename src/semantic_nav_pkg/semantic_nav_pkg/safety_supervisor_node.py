@@ -8,7 +8,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
-from .safety import SafetyLimits, filter_action
+from .safety import SafetyLimits, directional_clearance, evasive_action, filter_action
 
 
 class SafetySupervisorNode(Node):
@@ -17,7 +17,7 @@ class SafetySupervisorNode(Node):
         for name, default in (
             ('max_forward', 2.0), ('max_lateral', 1.5), ('max_yaw_rate', 1.0),
             ('max_acceleration', 2.0), ('hard_clearance', 0.75),
-            ('warning_clearance', 1.5), ('input_timeout', 0.5),
+            ('warning_clearance', 1.5), ('evasive_clearance', 2.25), ('input_timeout', 0.5),
         ):
             self.declare_parameter(name, default)
         self.limits = SafetyLimits(**{
@@ -26,8 +26,13 @@ class SafetySupervisorNode(Node):
              'hard_clearance', 'warning_clearance')
         })
         self.timeout = float(self.get_parameter('input_timeout').value)
+        self.evasive_clearance = float(self.get_parameter('evasive_clearance').value)
+        if (not math.isfinite(self.evasive_clearance) or
+                self.evasive_clearance <= self.limits.warning_clearance):
+            raise ValueError('evasive_clearance must be finite and exceed warning_clearance')
         self.last_scan = None
         self.last_scan_time = None
+        self.scan = None
         self.previous = (0.0, 0.0, 0.0)
         self.last_time = self.get_clock().now()
         self.safe_pub = self.create_publisher(TwistStamped, '/vyoma/control/safe_command', 10)
@@ -42,6 +47,7 @@ class SafetySupervisorNode(Node):
         del request
         self.last_scan = None
         self.last_scan_time = None
+        self.scan = None
         self.last_action_time = None
         self.previous = (0.0, 0.0, 0.0)
         self.last_time = self.get_clock().now()
@@ -54,18 +60,39 @@ class SafetySupervisorNode(Node):
         return response
 
     def scan_callback(self, msg):
-        finite = [value for value in msg.ranges if math.isfinite(value) and value >= msg.range_min]
-        self.last_scan = min(finite) if finite else msg.range_max
-        self.last_scan_time = self.get_clock().now()
+        self.scan = msg
+        finite = [value for value in msg.ranges if math.isfinite(value)
+                  and msg.range_min <= value <= msg.range_max]
+        # No measured ranges is unknown, not proof of an unobstructed path.
+        self.last_scan = min(finite) if finite else None
+        self.last_scan_time = self.get_clock().now() if finite else None
 
     def action_callback(self, msg):
         now = self.get_clock().now()
         self.last_action_time = now
         dt = max(0.001, (now - self.last_time).nanoseconds / 1e9)
         fresh = self.last_scan_time is not None and (now - self.last_scan_time).nanoseconds / 1e9 <= self.timeout
+        action = (msg.twist.linear.x, msg.twist.linear.y, msg.twist.angular.z)
+        directional = 0.0
+        avoidance_steer = False
+        if fresh and self.scan is not None:
+            bearing = math.atan2(action[1], action[0]) if math.hypot(action[0], action[1]) > 0.05 else 0.0
+            directional = directional_clearance(
+                self.scan.ranges, bearing, self.scan.angle_min, self.scan.angle_increment,
+                maximum_range=self.scan.range_max)
+            if directional < self.evasive_clearance:
+                escape = evasive_action(self.scan.ranges, bearing, self.scan.angle_min,
+                                        self.scan.angle_increment, self.limits,
+                                        minimum_clearance=self.evasive_clearance,
+                                        half_width=6,
+                                        maximum_range=self.scan.range_max)
+                if escape is not None:
+                    action = (*escape[0][:2], action[2])
+                    directional = escape[1]
+                    avoidance_steer = True
         result = filter_action(
-            (msg.twist.linear.x, msg.twist.linear.y, msg.twist.angular.z), self.previous,
-            self.last_scan if self.last_scan is not None else 0.0, dt, fresh, self.limits)
+            action, self.previous, self.last_scan if self.last_scan is not None else 0.0,
+            dt, fresh, self.limits, directional_clearance=directional)
         output = TwistStamped()
         output.header.stamp = now.to_msg()
         output.header.frame_id = 'base_link'
@@ -75,8 +102,15 @@ class SafetySupervisorNode(Node):
         self.last_time = now
         status = String()
         status.data = json.dumps({'stamp_ns': now.nanoseconds,
-                                  'override': result.overridden, 'reason': result.reason,
-                                  'minimum_clearance': self.last_scan})
+                                  'action_stamp_ns': (msg.header.stamp.sec * 1_000_000_000 +
+                                                      msg.header.stamp.nanosec),
+                                  'override': result.overridden or avoidance_steer,
+                                  'reason': ('avoidance_steer' if avoidance_steer and
+                                             result.reason not in ('hard_clearance', 'stale_input',
+                                                                   'invalid_clearance', 'invalid_action')
+                                             else result.reason),
+                                  'minimum_clearance': self.last_scan,
+                                  'action_clearance': directional})
         self.status_pub.publish(status)
 
     def watchdog(self):

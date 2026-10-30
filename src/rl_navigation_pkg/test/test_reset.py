@@ -47,3 +47,26 @@ def test_invalid_speed_threshold_rejected(speed):
 def test_extreme_motion_is_rejected_without_numeric_overflow():
     validator = ResetValidator(initial_sequence=0)
     assert not validator.observe(motion(1, 1e308))
+
+
+@pytest.mark.parametrize('position', [(0.0, 0.0, 5.0), (2.0, 0.0, 0.0), (float('nan'), 0.0, 0.0)])
+def test_reset_rejects_settled_vehicle_away_from_start(position):
+    validator = ResetValidator(initial_sequence=0, required_stable_samples=1)
+    assert not validator.observe(VehicleMotion(1, 0.0, 0.0, 0.0, *position))
+
+
+@pytest.mark.parametrize('roll,pitch,angular_speed', [(0.4, 0.0, 0.0), (0.0, 0.4, 0.0),
+                                                    (0.0, 0.0, 0.3), (float('nan'), 0.0, 0.0)])
+def test_reset_rejects_tilted_or_rotating_vehicle(roll, pitch, angular_speed):
+    validator = ResetValidator(initial_sequence=0, required_stable_samples=1)
+    assert not validator.observe(VehicleMotion(1, 0.0, 0.0, 0.0,
+                                               roll=roll, pitch=pitch,
+                                               angular_speed=angular_speed))
+
+
+def test_reset_requires_continuous_stability_for_minimum_simulation_time():
+    validator = ResetValidator(initial_sequence=0, required_stable_samples=2,
+                               minimum_stable_duration=2.0)
+    assert not validator.observe(VehicleMotion(1, 0, 0, 0, timestamp_us=1_000_000))
+    assert not validator.observe(VehicleMotion(2, 0, 0, 0, timestamp_us=2_000_000))
+    assert validator.observe(VehicleMotion(3, 0, 0, 0, timestamp_us=3_000_000))

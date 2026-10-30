@@ -87,22 +87,70 @@ vyoma/
 
 | Capability | Status |
 | :--- | :--- |
-| Containerized ROS 2/PX4 environment | Implemented; clean Docker build validation pending |
+| Containerized ROS 2/PX4 environment | Implemented; working simulation container used for training and evaluation |
 | Pinned PX4, `px4_msgs`, XRCE-DDS and Python dependencies | Implemented |
 | ENU/NED coordinate conversion | Implemented and unit tested |
-| Autonomous mission state machine | Implemented |
-| Nav2 global-planner integration | Implemented; SITL validation pending |
-| 64-sector depth observation | Implemented |
+| Autonomous mission state machine | Implemented and exercised in PX4 SITL |
+| Nav2 global-planner integration | Implemented; short missions exercised in SITL |
+| 64-sector depth observation | Implemented with stale/invalid scan handling; observed-but-empty sectors read as maximum range, `inf` means outside the camera view (unknown) |
 | Three-frame PPO observation history | Implemented |
 | Three-axis local RL action contract | Implemented |
-| Deterministic safety supervisor | Implemented and unit tested |
-| Commissioning obstacle-deflection baseline | Implemented |
-| Trained and accepted PPO checkpoint | Not yet available |
+| Deterministic safety supervisor | Direction-aware bounded escape that never steers into unobserved sectors, and a hard stop when no observed safe forward sector exists; unit tested, but the obstacle margin still fails in 5 m SITL routes |
+| PPO/SAC training and checkpoint resumption | Implemented; PPO is the stronger short-goal candidate in the current matched evaluation |
+| Reproducible five-case short-goal evaluation | Implemented; PPO accepted 2/5, SAC 0/5 |
+| Trained and accepted obstacle-avoidance policy | Not yet available; no current checkpoint steers toward its target (see below) |
+| Per-step mission telemetry | `mission_smoke.py` records target, raw policy action, safety-filtered action, safety reason, pose and Nav2 paths |
+| Actual PX4 odometry replay | Blender scene, still image and MP4 available for a measured short mission; 5 m route also has an odometry plot |
 | Semantic depth fusion | Planned for Stage 2 |
 | Learned vertical avoidance | Planned for Stage 3 |
-| Real-aircraft deployment | Blocked until simulation acceptance passes |
+| Real-aircraft deployment | Out of scope until simulation acceptance passes; hardware integration remains |
 
-The repository currently provides the architecture and training/runtime contracts for Stage 1. It does not include a pre-trained policy, and the complete Gazebo mission acceptance suite has not yet been run.
+The project includes training checkpoints, five-case matched evaluations,
+plots, and a Blender replay built from actual PX4 SITL odometry. PPO passed 2/5
+short-goal cases; SAC passed 0/5. A 5 m PPO mission completed goal reach, landing
+and disarm, but its minimum reported navigation range was 0.43 m against the
+0.75 m acceptance threshold. It is therefore a failed obstacle-course result,
+not a reliable avoidance policy. The outstanding software milestones are safe
+obstacle-course margins and repeatable multi-seed evaluation; physical hardware
+integration is separate.
+
+### Latest findings (2026-10-30)
+
+- **Why PPO turned away from its goal:** the `ppo-easy-reward2` checkpoint
+  (512 steps) outputs a near-constant command (forward +0.14, lateral -0.13,
+  yaw +0.10) whatever the target bearing is. Its constant left yaw makes the
+  body-frame command arc away from the goal. Telemetry from a 5 m route to
+  (5, -4) confirmed this in SITL: the raw action stayed at about
+  [0.36, -0.23, +0.13] while the target was 45-60° to the right. This is
+  untrained learned behavior; the frames, path and local-target pipeline were
+  checked and are consistent.
+- **Pipeline fixes:** PX4 yaw rate is now published in `/vyoma/odometry`
+  (previously always 0 in the observation). Depth sectors now distinguish
+  "observed, clear" from "not observed", so the safety supervisor no longer
+  steers into space the forward camera cannot see.
+- **Curriculum fix:** the `easy` profile previously placed goals within ±14° of
+  straight ahead, which a constant forward command solves. Goals now span about
+  ±115° of bearing at 1.2-2.9 m, so steering has to be learned.
+- **Post-fix SITL routes to (5, -4)** both failed the acceptance gate. PPO
+  timed out at 4.52 m from the goal with 0.739 m minimum clearance. The
+  deterministic baseline timed out at 2.29 m with 0.592 m clearance.
+- **Retraining status:** two PPO runs on the fixed pipeline stopped during
+  episode resets (one with no navigation observation after a Nav2 planning
+  failure, one with the vehicle not disarming after a likely crash). No
+  checkpoint passes the offline bearing probe, and none is qualified.
+
+The full record, including commands, failures and evidence paths, is in
+`artifacts/implementation-log-2026-10-30.md`.
+
+See [IMPLEMENTATION_CHECKLIST.md](IMPLEMENTATION_CHECKLIST.md) for the measured
+results, [RESEARCH.md](RESEARCH.md) for the algorithm rationale, and
+`artifacts/eval-ppo-512-safe/summary.json` and
+`artifacts/eval-sac-512-safe/summary.json` for case-level outcomes. The rendered
+replay is `artifacts/ppo-512-telemetry-replay-v2.mp4` and its still image is
+`artifacts/ppo-512-telemetry-replay-v2.png`. The 5 m obstacle route and its
+clearance failure are plotted in
+`artifacts/mission-ppo-obstacle-5m-default-rate.png` and recorded in the
+matching JSON file.
 
 ---
 
@@ -151,6 +199,9 @@ This opens Gazebo's actual 3D world. The current simulated vehicle is PX4's
 Without `-Gui`, the PowerShell launcher runs headless. `-Training` keeps the
 policy node in observation-only mode. `-Duration 60` stops a bounded session
 60 seconds after PX4 telemetry becomes ready; omit it for an interactive run.
+For an experimental faster simulation, `-DepthRate 10` requests a 10 Hz depth
+camera. This rate has passed one short mission but has not passed reliability
+or obstacle-avoidance acceptance; omit it to keep Gazebo's original rate.
 
 The managed session waits for PX4 odometry and status, writes component logs
 under `artifacts/simulation/`, and stops its owned processes on exit or component
@@ -196,6 +247,90 @@ ros2 launch semantic_nav_pkg autonomous.launch.py \
 
 ros2 run rl_navigation_pkg train_node
 ```
+
+For a short pipeline check, specify a smaller rollout and a separate checkpoint:
+
+```bash
+ros2 run rl_navigation_pkg train_node --timesteps 128 --rollout-steps 64 \
+  --model-path ./artifacts/ppo-smoke
+```
+
+A smoke run only checks training integration. It does not demonstrate that the
+policy learned reliable navigation. For simulation evaluation on Windows, pass
+the checkpoint path as seen inside the container:
+
+```powershell
+.\run_simulation.ps1 -ModelPath /mnt/vyoma/artifacts/ppo-smoke.zip
+```
+
+To continue a checkpoint after restarting the training simulator, use a new
+output name so the earlier checkpoint and episode log are preserved:
+
+```bash
+ros2 run rl_navigation_pkg train_node --resume-from ./artifacts/ppo-smoke.zip \
+  --timesteps 512 --model-path ./artifacts/ppo-continued
+```
+
+The requested timesteps are additional; PPO reuses the checkpoint's rollout
+configuration and optimizer. An interrupted partial rollout is discarded, so
+the saved timestep counter includes collected steps that may not have produced
+an optimizer update. `--device cuda` explicitly requires a CUDA-enabled
+PyTorch runtime and an exposed GPU; `--device cpu` selects the CPU.
+Reward version 2 distinguishes routine acceleration limiting from emergency
+interventions. Compare reward curves only within the same reward version; older
+checkpoints used the previous reward function.
+For initial goal-reaching practice, `--curriculum easy` samples short goals
+(1.2-2.9 m, about ±115° of bearing) before the first obstacle. The default `standard` profile samples longer goals
+among obstacles. Report and evaluate the profiles separately: performance on
+the easy profile is not evidence of obstacle avoidance.
+
+Long runs can save intermediate checkpoints, each with its own metadata, for
+mid-training evaluation:
+
+```bash
+ros2 run rl_navigation_pkg train_node --curriculum easy --timesteps 8192   --rollout-steps 512 --checkpoint-every 2048 --model-path ./artifacts/ppo-easy-wide
+```
+
+This writes `ppo-easy-wide-2048.zip`, `ppo-easy-wide-4096.zip`, and so on.
+Training runs at about 1 step/s in the headless real-time simulator. When the
+package is installed without `--symlink-install`, set `VYOMA_PX4_SOURCE` to the
+PX4-Autopilot checkout so episode resets can restart the PX4 estimator.
+
+Before evaluating any checkpoint in simulation, check that its action depends
+on the target bearing. A policy that outputs the same command for every bearing
+cannot navigate:
+
+```bash
+python3 scripts/policy_probe.py ./artifacts/ppo-easy-wide-2048.zip
+```
+
+SAC is available as an experimental comparison using the same environment:
+
+```bash
+ros2 run rl_navigation_pkg train_node --algorithm sac --curriculum easy \
+  --timesteps 512 --episode-steps 200 --model-path ./artifacts/sac-easy
+```
+
+SAC checkpoints include a replay buffer (`.replay.pkl`), which must be kept
+beside the model when resuming. Evaluate PPO and SAC separately with matching
+scenarios and seeds; training reward alone does not establish which is better.
+
+After stopping any existing simulation session, run the five short-goal
+evaluation cases against a saved policy:
+
+```bash
+python3 scripts/evaluate_policy_batch.py --px4-source /path/to/PX4-Autopilot \
+  --model-path ./artifacts/ppo-easy-reward2.zip --output-dir ./artifacts/eval-ppo-easy
+```
+
+Omit `--model-path` to evaluate the commissioning baseline. Each case writes
+its mission result and sampled odometry path. The summary distinguishes goal
+and landing completion from passing the clearance gate. These short goals do
+not establish obstacle-course performance.
+
+Use the actual container workspace path if it differs from `/mnt/vyoma`.
+Training resets require the simulated vehicle to land, disarm and settle near
+the start. Resetting from an arbitrary landing location is not yet established.
 
 The Stage 1 observation contains:
 
@@ -258,7 +393,10 @@ python3 scripts/mission_smoke.py --x 1.5 --y 0.0 --timeout 180
 The JSON result records mission phases, actual arming, altitude, path length,
 navigation clearance, final goal distance, and elapsed wall time. A successful
 lifecycle alone is insufficient: the smoke check also requires landing within
-0.75m of the goal. This short mission is an integration check, not an obstacle
+0.75m of the goal and a minimum reported navigation clearance of at least
+0.75m. During navigation it also records 5 Hz `telemetry` rows (state, pose,
+local target, raw and safe actions, safety reason, clearance) and every Nav2
+`paths` update. These rows separate learned behavior from safety intervention. This short mission is an integration check, not an obstacle
 avoidance or policy acceptance result.
 
 ---

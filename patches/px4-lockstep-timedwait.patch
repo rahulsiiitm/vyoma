@@ -1,0 +1,49 @@
+diff --git a/platforms/posix/src/px4/common/lockstep_scheduler/src/lockstep_scheduler.cpp b/platforms/posix/src/px4/common/lockstep_scheduler/src/lockstep_scheduler.cpp
+index 486ddcfe86..b5896856f7 100644
+--- a/platforms/posix/src/px4/common/lockstep_scheduler/src/lockstep_scheduler.cpp
++++ b/platforms/posix/src/px4/common/lockstep_scheduler/src/lockstep_scheduler.cpp
+@@ -67,6 +67,9 @@ void LockstepScheduler::set_absolute_time(uint64_t time_us)
+ 	WakeUp wakeups[MAX_WAKEUPS];
+ 	int num_wakeups = 0;
+ 
++	// Acquire this before collecting pointers. A waiter must not pass its
++	// broadcast barrier between collection and acquisition of this mutex.
++	std::lock_guard<std::mutex> lock_broadcast(_broadcast_mutex);
+ 	{
+ 		std::unique_lock<std::mutex> lock_timed_waits(_timed_waits_mutex);
+ 		_setting_time = true;
+@@ -93,10 +96,9 @@ void LockstepScheduler::set_absolute_time(uint64_t time_us)
+ 
+ 			if (timed_wait->time_us <= time_us &&
+ 			    !timed_wait->timeout) {
+-				// Mark as timed out and collect for broadcast
+-				timed_wait->timeout = true;
+-
+ 				if (num_wakeups < MAX_WAKEUPS) {
++					// Leave overflow entries eligible for the next clock update.
++					timed_wait->timeout = true;
+ 					wakeups[num_wakeups++] = {timed_wait->passed_cond, timed_wait->passed_lock};
+ 				}
+ 			}
+@@ -109,8 +111,6 @@ void LockstepScheduler::set_absolute_time(uint64_t time_us)
+ 	// Broadcast under _broadcast_mutex (not _timed_waits_mutex) so that
+ 	// locking passed_lock here doesn't create an ordering cycle.
+ 	{
+-		std::lock_guard<std::mutex> lock_broadcast(_broadcast_mutex);
+-
+ 		for (int i = 0; i < num_wakeups; ++i) {
+ 			pthread_mutex_lock(wakeups[i].lock);
+ 			pthread_cond_broadcast(wakeups[i].cond);
+@@ -158,9 +158,9 @@ int LockstepScheduler::cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *loc
+ 
+ 	timed_wait.done = true;
+ 
+-	if (!timeout && _setting_time) {
+-		// This is where it gets tricky: the timeout has not been triggered yet,
+-		// and another thread is in set_absolute_time().
++	if (_setting_time) {
++		// A different notification can wake this waiter after set_absolute_time()
++		// marks it timed out but before that function uses its mutex and condition.
+ 		// If it already passed the 'done' check, it will access the mutex and
+ 		// the condition variable next. However they might be invalid as soon as we
+ 		// return here, so we wait until set_absolute_time() is done.

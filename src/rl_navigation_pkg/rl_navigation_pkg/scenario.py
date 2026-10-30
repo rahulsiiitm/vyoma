@@ -80,3 +80,10 @@ TRAINING_WORLD_EXCLUSIONS = (
     CircularExclusion(5.0, 2.0, 0.50),
     CircularExclusion(7.0, -1.0, 1.12),
 )
+
+# A separate initial curriculum: short goals before the first obstacle. Goals
+# span roughly +/-115 degrees of bearing so the policy must learn to steer;
+# an almost straight-ahead band is solved by a constant forward command.
+EASY_BOUNDS = ScenarioBounds(minimum_x=-0.5, maximum_x=2.0,
+                             minimum_y=-2.0, maximum_y=2.0,
+                             minimum_start_distance=1.2)

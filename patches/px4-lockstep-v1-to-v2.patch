@@ -1,0 +1,21 @@
+--- a/platforms/posix/src/px4/common/lockstep_scheduler/src/lockstep_scheduler.cpp
++++ b/platforms/posix/src/px4/common/lockstep_scheduler/src/lockstep_scheduler.cpp
+@@ -67,6 +67,9 @@
+ 	WakeUp wakeups[MAX_WAKEUPS];
+ 	int num_wakeups = 0;
+ 
++	// Acquire this before collecting pointers. A waiter must not pass its
++	// broadcast barrier between collection and acquisition of this mutex.
++	std::lock_guard<std::mutex> lock_broadcast(_broadcast_mutex);
+ 	{
+ 		std::unique_lock<std::mutex> lock_timed_waits(_timed_waits_mutex);
+ 		_setting_time = true;
+@@ -108,8 +111,6 @@
+ 	// Broadcast under _broadcast_mutex (not _timed_waits_mutex) so that
+ 	// locking passed_lock here doesn't create an ordering cycle.
+ 	{
+-		std::lock_guard<std::mutex> lock_broadcast(_broadcast_mutex);
+-
+ 		for (int i = 0; i < num_wakeups; ++i) {
+ 			pthread_mutex_lock(wakeups[i].lock);
+ 			pthread_cond_broadcast(wakeups[i].cond);

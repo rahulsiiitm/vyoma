@@ -3,6 +3,190 @@
 This checklist is ordered by dependency. A phase is complete only when its
 acceptance checks pass; code presence alone does not count as completion.
 
+### Verification on 2026-10-30
+
+- Added resumable PPO and SAC training, bounded replay-buffer persistence for
+  SAC, algorithm-aware inference loading, reward version 2, and an easy
+  short-goal curriculum. Added an independent five-case evaluation runner
+  that stores PX4 odometry, acceptance outcomes and selected source/config
+  fingerprints for each model.
+- Fixed emergency-hold recovery to require continuous fresh clear status and
+  made empty or invalid depth scans unknown rather than clear. Smoke acceptance
+  now rejects a completed lifecycle if clearance is missing or below 0.75m.
+- Matched evaluation of the 512-step easy PPO and SAC checkpoints used the same
+  five short goals, safety thresholds and mission timeout. PPO reached, landed,
+  disarmed and passed the clearance gate in 2/5 cases. SAC passed 0/5. Neither
+  model is accepted for obstacle avoidance; these goals do not establish
+  obstacle-course performance. Case-level results and provenance are in
+  `artifacts/eval-ppo-512-safe/summary.json` and
+  `artifacts/eval-sac-512-safe/summary.json`.
+- Blender replay uses the passing PPO case's recorded PX4 positions and
+  orientations. It is explicitly labeled as a schematic telemetry replay, not
+  Gazebo footage. Preview image: `artifacts/ppo-512-telemetry-replay-v2.png`;
+  editable scene: `artifacts/ppo-512-telemetry-replay-v2.blend`.
+- Replaced the global-minimum-only hard stop with direction-aware sector checks
+  and a bounded escape heading when the intended direction is blocked. Unit
+  tests verify side clearance, front escape selection, and stopping when every
+  forward heading is blocked. The escape margin is a tunable simulation
+  parameter; it has not yet produced an accepted obstacle route.
+- A 5m PPO mission at PX4's default camera rate completed goal reach, landing
+  and disarm, with 0.373m final goal error. Its minimum reported navigation
+  range was 0.425m, below the 0.75m gate, so the mission failed acceptance. The
+  path plot and full odometry are `artifacts/mission-ppo-obstacle-5m-default-rate.png`
+  and `artifacts/mission-ppo-obstacle-5m-default-rate.json`. A 3.0m escape-margin
+  trial also completed but measured only 0.408m minimum range. These runs show
+  route completion, not safe obstacle avoidance; a 10Hz trial additionally
+  reproduced the PX4 mutex assertion during landing.
+- The clean ROS build finished all four packages and the application regression
+  suite passed 95 tests. This verifies builds and software behavior, not flight
+  reliability. Robust obstacle-course acceptance and multi-seed reliability
+  remain software work; hardware integration, semantic perception and vertical
+  avoidance remain later phases.
+
+### Verification on 2026-10-29
+
+- Added PPO checkpoint resumption and explicit device selection. A small test
+  trained a checkpoint, resumed it and verified that the step count increased
+  from four to eight without overwriting the original.
+- Resumed a 512-step checkpoint for another 512 steps. The run completed and
+  saved `artifacts/ppo-resumed-1024.zip`; none of its six completed episodes
+  reached a goal, and three ended with mission failures. The episode chart is
+  `artifacts/ppo-resumed-1024-rewards.png`. This is not evidence of a successful
+  navigation policy.
+- Added reward version 2, which does not penalize routine acceleration limiting
+  as an emergency intervention. Added an easy short-goal curriculum separate
+  from the obstacle scenarios. A fresh 512-step easy run reached its goal in
+  four of seven completed training episodes, with two mission failures and one
+  episode reaching its step limit. Evidence: `artifacts/ppo-easy-reward2.zip`,
+  `.metadata.json`, `.monitor.csv`, and `artifacts/ppo-easy-reward2.png`.
+  A separate deterministic 1.5m-goal mission loaded this checkpoint but ended
+  in emergency hold and failsafe landing, 0.757m from the goal, with a minimum
+  reported navigation clearance of 0.749m. Evidence:
+  `artifacts/mission-ppo-easy-eval-1.json`. Training results are not evidence
+  of reliable navigation or obstacle avoidance.
+- The ROS application regression suite passed 82 tests in the existing
+  container. The PX4 scheduler patch was revised and the SITL binary rebuilt;
+  its long-running stability is under test.
+- On the revised PX4 build, a resumed PPO run completed 512 additional steps
+  and saved `artifacts/ppo-lockstep-v2-1536.zip`. Ten episodes completed;
+  nine ended on hard-clearance intervention and none reached a goal. This
+  session did not reproduce the earlier clock stall, but one session is not a
+  reliability proof. It used the previous reward and standard curriculum.
+- A further 512-step easy-curriculum continuation completed and saved
+  `artifacts/ppo-easy-reward2-1024.zip`; its three completed episodes ended at
+  hard clearance. A separate 1.5m mission reached its goal, landed and
+  disarmed in 50.9 seconds, 0.424m from the goal, but reported a minimum
+  navigation clearance of 0.744m. It therefore does not satisfy the 0.75m
+  clearance gate. Evidence: `artifacts/mission-ppo-easy-1024-eval-1.json` and
+  the recorded path plot `artifacts/mission-ppo-easy-1024-eval-1.png`. The
+  recorded JSON used acceptance version 2, which did not enforce this gate.
+- Mission acceptance version 3 separately requires measured clearance at or
+  above the threshold. Added SAC as a separate experimental algorithm, including
+  saving and restoring its replay buffer. A 512-step SAC easy-curriculum run
+  completed four episodes: one reached a goal during initial random exploration,
+  two had mission failures and one reached its step limit. Evidence:
+  `artifacts/sac-easy-512.metadata.json`, `.monitor.csv`, and `.png`. This does
+  not establish SAC policy performance. The application tests passed 86 cases.
+- A five-case independent evaluation of the 1,024-step PPO checkpoint under the
+  previous recovery rule accepted 3 of 5 short-goal missions. One reached the
+  goal but failed the clearance gate; one ended in failsafe. This is not an
+  obstacle-course evaluation. Evidence: `artifacts/eval-ppo-easy-1024/summary.json`.
+- After observing rapid emergency-hold/replan cycling in SAC evaluation, the
+  mission manager was changed to require one second of fresh, sufficiently
+  clear safety status before recovery. Persistent danger still triggers failsafe
+  landing. Unit tests cover recovery gaps, stale statuses and timeout. A two-case
+  PPO recheck under the new rule accepted one and failed one; broader comparisons
+  remain necessary. Application tests passed 90 cases.
+
+### Verification on 2026-10-28
+
+- Fixed Windows launcher commands containing CRLF when passed to container Bash.
+- Built the four ROS packages in a fresh workspace build directory; 84 ROS
+  regression tests passed in the existing container image.
+- A commissioning-controller mission to (1.5m, 0m) armed, took off, reached
+  the goal, landed 0.277m from it and disarmed. Evidence:
+  `artifacts/mission-20261028-063739.json`. One run does not establish reliability.
+- PPO reset now preserves simulation time, checks the settled start pose, waits
+  for navigation observations, and requests landing and confirmed disarm
+  between episodes. Gazebo's native pose service returns the disarmed model to
+  the origin; a 1.5m displaced start and two short episodes were exercised.
+  The latest reset additionally requires fresh PX4 preflight readiness, level
+  attitude, low angular speed and two seconds of stable simulation time; two
+  short episodes passed these checks.
+  Repeated-reset reliability and arbitrary landing scenarios remain unproven.
+- A bounded PPO smoke run completed 128 timesteps and saved
+  `artifacts/ppo-smoke-v2.zip` with metadata. This is an experimental checkpoint,
+  not an accepted policy or evidence of learning improvement.
+- A mission with that checkpoint reached the goal and began landing but timed
+  out at 180 seconds before confirmed disarm. Evidence:
+  `artifacts/mission-ppo-smoke-v2.json`. No success was recorded for that run.
+- A second mission using the same checkpoint lost PX4 status during takeoff and
+  timed out. PX4 internal odometry timestamps stopped while Gazebo time kept
+  advancing. Evidence: `artifacts/mission-ppo-smoke-v2-retry.json`.
+- A third mission under gdb with the same checkpoint and a 270-second limit
+  armed, reached the 1.5m goal, landed 0.426m from it and disarmed in 234.5
+  seconds. Evidence: `artifacts/mission-ppo-smoke-debug.json`. This one short
+  success does not establish generalization, learning benefit or stability.
+- A 512-step PPO run was stopped at 220 timesteps after a later reset cycle
+  entered an unstable simulated attitude. The partial checkpoint is marked
+  incomplete. Longer training and reset stability are still blocked.
+- A later 256-step run was stopped at 131 collected steps after a short episode
+  and unstable takeoff. `artifacts/ppo-256.monitor.csv` records a 128-step
+  episode with reward -402.84 and a 4-step episode with reward -113.78. These
+  are training rewards, not success rates or evidence of improvement.
+- After adding the preflight and stability gates, a 192-step PPO run completed,
+  including a 100-step episode and a reset into a second episode. Its first
+  episode had reward -303.68, reached no goal and ended at the step limit.
+  Evidence: `artifacts/ppo-192-gated.monitor.csv` and
+  `artifacts/ppo-192-gated.metadata.json`. It remains an experimental checkpoint.
+- A 300-second 1.5m-goal evaluation of that checkpoint timed out without
+  reaching the goal, with 1.90m final distance. Evidence:
+  `artifacts/mission-ppo-192-gated.json`.
+- Exposing the laptop RTX 3050 to a separate copy of the container did not
+  improve a short idle simulation clock measurement (0.347x with GPU access,
+  0.355x without). These single samples do not establish performance limits;
+  the installed PyTorch build is CPU-only and NVIDIA GPU memory use was zero.
+- Reducing the simulated depth camera from 30Hz to 10Hz raised one idle clock
+  measurement from 0.352x to 0.974x real time. One 10Hz commissioning mission
+  under gdb passed in 23.0 seconds with 0.278m final goal error
+  (`artifacts/mission-depth10-debug.json`). A separate session hit the PX4
+  mutex assertion; 10Hz remains an optional, experimental setting.
+- After restarting the simulator's PX4 estimator during reset, a 10Hz PPO run
+  passed multiple episode resets and collected 420 timesteps before PX4 time
+  stalled. The checkpoint is incomplete; five completed episodes did not reach
+  their goals and two ended on hard-clearance intervention. Evidence:
+  `artifacts/ppo-512-ekf.monitor.csv` and `.metadata.json`.
+- A subsequent 10Hz run under gdb completed 512 timesteps and five episodes
+  in about 275 seconds. No completed episode reached its goal; one ended after
+  a hard-clearance intervention. Evidence: `artifacts/ppo-512-debug.log`,
+  `artifacts/ppo-512-debug.monitor.csv` and `.metadata.json`. A single completed
+  run does not resolve the intermittent PX4 stall or prove policy quality.
+- After an experimental PX4 lockstep scheduler patch, a 10Hz run collected
+  856 of 1,024 requested timesteps and completed nine episodes, with no goals
+  reached. The simulator's 600-second session limit stopped the run during a
+  reset; its checkpoint is marked incomplete. No mutex assertion was observed
+  in this session. This is not sufficient to establish that the patch fixes
+  the intermittent crash. Evidence: `artifacts/ppo-1024-lockstep.metadata.json`
+  and `.monitor.csv`.
+- A second 10Hz training attempt stopped after 199 steps when reset did not
+  meet the settled-pose gate. Its checkpoint is incomplete; two completed
+  episodes reached no goals (`artifacts/ppo-1024-lockstep-retry.metadata.json`
+  and `.monitor.csv`).
+- Another patched PX4 session stopped after 229 steps with no fresh navigation
+  observation. PX4 telemetry stopped while the Gazebo clock continued. A
+  manually interrupted debugger captured the clock callback waiting for a
+  mutex in `LockstepScheduler::set_absolute_time`; this shows the experimental
+  patch has not resolved all scheduler stalls. Three completed episodes did
+  not reach their goals (`artifacts/ppo-headless-1024.metadata.json`,
+  `.monitor.csv`, and `artifacts/simulation/20261028-173940-102567/px4.log`).
+- A live 5m obstacle-course mission was visually observed taking off. The
+  controller reported obstacle deflection and recovery, then entered emergency
+  hold and failsafe landing before reaching the goal. It landed 2.94m from the
+  goal and is a failed mission (`artifacts/mission-obstacle-live.json`). The
+  software-rendered Gazebo view was dark and slow with the GUI open.
+- One PPO startup failed after loss of PX4 telemetry, and a separate session hit
+  the existing native PX4 mutex assertion. The causes remain unconfirmed.
+
 ### Verification on 2026-10-26
 
 - Fixed duplicate odometry reset acceptance, invalid observation/action handling,
@@ -64,7 +248,7 @@ acceptance checks pass; code presence alone does not count as completion.
 
 ## 0. Repository stabilization
 
-- [ ] Review and commit the existing cleanup as a coherent baseline.
+- [x] Review and commit the existing cleanup as a coherent baseline (PR #1).
 - [ ] Validate a clean Docker image build from an empty cache.
 - [ ] Start and stop the complete simulation with one command.
 - [ ] Confirm that shutdown leaves no PX4, Gazebo, DDS, or ROS processes.
@@ -132,11 +316,12 @@ acceptance checks pass; code presence alone does not count as completion.
 
 ## 9. Hardware readiness (after hardware details are available)
 
-- Hardware inventory supplied on 2026-10-26:
+- Hardware inventory supplied on 2026-10-26 and updated on 2026-10-28:
   - Pixhawk 2.4.8; installed PX4 version and board/flash identification pending.
   - Jetson Orin Nano Super 8GB developer kit; user reports JetPack 7.2.
-  - Arducam Sony IMX477 12.3MP RGB camera with swappable adjustable M12 lens.
-  - Arducam Sony IMX219 8MP RGB camera with autofocus lens.
+  - Waveshare IMX477-160 12.3MP RGB camera with M12 lens.
+  - Arducam IMX219 8MP RGB camera with motorized focus.
+  - HC-SR04 ultrasonic range sensors; quantity and mounting remain to be chosen.
   - NEO-7M GPS module.
   - S500 drone frame kit.
   - T-Motor Air Gear 450 propulsion system with 10-inch propellers.
@@ -148,15 +333,16 @@ acceptance checks pass; code presence alone does not count as completion.
 - NVIDIA currently documents Orin support for JetPack 7.2/7.2.1. Confirm the
   installed L4T release and exact Arducam SKUs/driver support before selecting
   the ARM64 runtime; the existing Humble x86 CPU image is a simulation image.
-- Two different RGB cameras are not a validated stereo depth system. Camera
-  mounting, synchronization, calibration, autofocus behavior, and software
-  metric-depth support have not been established.
-- Ultrasonic models/count/orientation/range/FOV/connection, camera roles, and
-  indoor/outdoor operating domain remain undecided. The latest inventory does
-  not include ultrasonic hardware. Current simulation depth sectors do not
-  implement this hardware sensor stack.
-- Jetson regulator/power wiring, RC/manual override, storage, final vehicle mass,
-  measured thrust/current, and payload endurance remain to be verified; the
+- The cameras will be used as monocular cameras. Camera mounting, calibration,
+  autofocus behavior, and software metric-depth support remain unverified.
+- HC-SR04 sensor count, orientation, coverage, interface and operating domain
+  remain undecided. The simulation depth sectors do not yet model this stack.
+- The intended Jetson supply is a 19V, 4A DC-DC regulator from the 4S battery;
+  confirm step-up operation, wiring and performance under load. Manual override
+  is planned through Mission Planner and MAVLink; compatibility with the actual
+  firmware, telemetry link and loss-of-link response remain unverified.
+- Storage, final vehicle mass, measured thrust/current, and payload endurance
+  remain to be verified; the
   supplied battery label alone does not establish payload capacity or flight time.
 - RGB detections do not provide the metric 64-sector depth observation used by
   the current policy. Implement and validate range fusion and unknown-space

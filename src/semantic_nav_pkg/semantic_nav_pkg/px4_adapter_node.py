@@ -59,6 +59,12 @@ class Px4AdapterNode(Node):
 
     def reset_callback(self, request, response):
         del request
+        if (self.vehicle_status is None or self.last_vehicle_status_time is None or
+                not 0.0 <= (self.get_clock().now() - self.last_vehicle_status_time).nanoseconds / 1e9 < self.status_timeout or
+                self.vehicle_status.arming_state != VehicleStatus.ARMING_STATE_DISARMED):
+            response.success = False
+            response.message = 'PX4 must have fresh, confirmed disarmed status before reset'
+            return response
         # This service is used only by the simulation episode manager. PX4
         # remains the authority for whether disarming is actually permitted.
         self.vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0)
@@ -118,6 +124,8 @@ class Px4AdapterNode(Node):
         out.twist.twist.linear.x = float(math.cos(self.yaw_enu) * vx + math.sin(self.yaw_enu) * vy)
         out.twist.twist.linear.y = float(-math.sin(self.yaw_enu) * vx + math.cos(self.yaw_enu) * vy)
         out.twist.twist.linear.z = float(vz)
+        # PX4 angular velocity is body FRD; yaw rate about FLU +z is the negated z.
+        out.twist.twist.angular.z = float(-msg.angular_velocity[2])
         self.odom_pub.publish(out)
         transform = TransformStamped()
         transform.header = out.header
@@ -152,6 +160,8 @@ class Px4AdapterNode(Node):
             'connected': odom_fresh and status_fresh,
             'arming_state': getattr(self.vehicle_status, 'arming_state', -1),
             'nav_state': getattr(self.vehicle_status, 'nav_state', -1),
+            'preflight_ready': getattr(self.vehicle_status, 'pre_flight_checks_pass', False),
+            'failsafe': getattr(self.vehicle_status, 'failsafe', True),
         })
         self.status_pub.publish(status)
         mode = OffboardControlMode()

@@ -3,6 +3,9 @@ mission_manager:
     simulation_authorized: true
     takeoff_altitude: 5.0
     goal_tolerance: 0.5
+    goal_hold_duration: 1.5
+    goal_hold_speed_tolerance: 0.25
+    goal_hold_drift_tolerance: 1.0
     recovery_error: 0.75
 
 px4_adapter:
@@ -26,6 +29,7 @@ safety_supervisor:
     max_acceleration: 2.0
     hard_clearance: 0.75
     warning_clearance: 1.5
+    evasive_clearance: 2.25
     input_timeout: 0.5
 
 local_target_node:
